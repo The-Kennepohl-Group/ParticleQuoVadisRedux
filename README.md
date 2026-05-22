@@ -1,55 +1,55 @@
-# Particle, Quo Vadis?
+# Particle, Quo Vadis. Redux
 
-An interactive simulation comparing classical and quantum particles confined to a one-dimensional box. Built as a teaching tool for chemistry and physics students.
+An interactive simulation of a particle in a one-dimensional finite potential well. A teaching tool for chemistry students covering ionisation, bound versus continuum states, the diffuseness of bound electronic states, and how the bound spectrum responds to changes in box geometry and effective mass.
 
-![Screenshot of the application](docs/images/screenshot.png)
+Sibling to [*Particle, Quo Vadis?*](https://github.com/pkennepohl/particle-quo-vadis), which covers the infinite-well case. The two apps are designed to be used together; Redux extends the first app's classical-vs-quantum comparison to a finite well and adds a side-by-side comparison of two systems with independently tunable geometry.
 
 ## What this teaches
 
-Side-by-side, the same box contains two different particles:
+Redux carries two intertwined chemistry stories.
 
-- **A classical particle** — a localized ball, either ballistic (deterministic, bouncing off walls) or Brownian (random walk). Position is always definite. Energy is exactly the value you set.
-- **A quantum particle** — described by a wavefunction. Position is probabilistic, measured one particle at a time. Energy is quantized: measurements return one of the eigenvalues $E_n = n^2 \pi^2 \hbar^2 / (2mL^2)$ with probabilities determined by how the state was prepared.
+**Ionisation (Tab 1).** Set the system energy below the well depth *V₀* and you have a bound electron in a molecular orbital; set it above *V₀* and the electron has been ejected — the photoelectron spectroscopy, work-function, and ionisation-potential regime. *V₀* stands in for the ionisation potential. Beyond that headline, several abstract ideas become tangible:
 
-The simulation makes several abstract ideas tangible:
+- **A finite number of bound states.** Deeper well, more bound orbitals — the same intuition as "more highly charged nucleus, more bound atomic orbitals before the ionisation threshold".
+- **Wavefunction leakage past the wall.** The classically forbidden region is not classically forbidden in quantum mechanics. This is the precondition for tunneling and the reason molecular orbitals are not sharply confined.
+- **Quantisation of bound-state energy** — sharp peaks at the numerical eigenvalues in the energy histogram, emerging from the Born rule.
+- **Classical-vs-quantum threshold contrast.** Above *V₀*, the classical particle escapes; the quantum particle is reported as ionised. Both panels switch to an "ionised" indicator. The parallel escape preserves the comparison and stays truthful about continuum states.
 
-- **Quantization of energy** — sharp peaks at $E_n$ in the energy histogram emerge from the Born rule.
-- **Measurement collapse** — each quantum measurement returns one eigenvalue; the distribution of repeated measurements reveals $|c_n|^2$.
-- **Position vs energy uncertainty** — a quantum particle prepared at a definite $E$ has a delocalized position; a particle localized in position has indefinite energy.
-- **Two sources of measurement spread** — intrinsic spectral width $\Gamma$ (a property of state preparation) vs. instrument resolution $\sigma$ (a property of the apparatus). At high $\sigma$, quantization becomes invisible — students see why high-resolution spectroscopy matters.
-- **Classical-quantum contrast** — at the same energy, the classical particle samples positions uniformly; the quantum particle samples $|\psi(x)|^2$. The classical kinetic-energy "histogram" is a single sharp peak; the quantum energy histogram shows the underlying eigenvalue structure.
+**Geometry and inertia drive the energy ladder (Tab 2).** Two independently configured quantum wells (System A and System B) are simulated side by side. The student can vary L (well width, nm), m\* (effective mass, m_e), and V₀ (depth, eV) on each side. The chemistry story is the size and mass dependence of bound-state spacing — the textbook explanation for conjugated π-system absorption colours, cyanine dye chain-length shifts, and quantum-dot fluorescence tuning. By default, all six parameters are linked across A and B so the student starts from a same-vs-same baseline and unlocks the chains they want to compare.
+
+See [PEDAGOGY.md](PEDAGOGY.md) for the design rationale, including the explicit reasoning for picking ionisation over tunneling as the central narrative in Tab 1 and "same prep, different physical system" as the framing for Tab 2.
+
+## Two tabs, two stories
+
+- **Tab 1 — Depth.** Classical vs quantum, fixed L and m. Adds a *V₀* slider, finite bound-state count, wavefunction visualisation past the walls, the ionisation threshold, and a live readout of the bound spectrum with parity, k, decay length 1/κ, and the current preparation's Born probability per state.
+- **Tab 2 — Width.** Two quantum systems side-by-side in real units (nm, m_e, eV). Each side has its own L, m\* (with a particle preset picker — electron, light/heavy effective electron, muon, proton, deuteron, alpha), and V₀. Every parameter has a link toggle so it can be locked across A and B (geometry-only comparison) or unlocked (full-flexibility comparison). Shared preparation (energy slider, σ, Γ) feeds both systems. Includes a per-side Spectroscopy panel that reports within-system transition energies and the A→B same-*n* photon energy for inter-well comparisons.
+- **Tab 3 — Shape.** Reserved for variable potential shape (rectangular / harmonic / Morse / Coulomb-like). Not yet implemented.
 
 ## Try it
 
 The simulation is a single HTML page. Open [`index.html`](index.html) in any modern browser. No installation required.
 
-If you'd like to deploy it for a class, see [Hosting](#hosting) below.
-
 ## How to use it
 
-- **Energy slider** sets the target energy for state preparation.
-- **Play / Pause** runs the simulation; **Stop** (red button) resets the histograms.
-- **Show theory** overlays the analytical $|\psi(x)|^2$ on the position histogram and $|c_n|^2$ markers on the energy histogram.
-- **Show eigenstates** marks the eigenvalues $E_n$ on the energy slider. Click an eigenstate label on the slider to snap the energy to that exact value.
-- **Spectral resolution $\Gamma$** controls how broadly the prepared state spreads across eigenstates (Lorentzian width).
-- **Instrument resolution $\sigma$** adds Gaussian noise to each energy measurement, modelling spectrometer finite resolution.
-- **ballistic / Brownian** toggle (top right of the Classical panel) switches the classical particle's motion type.
-- **Download** button (download arrow) exports the simulation state as CSV or JSON.
-- **Upload** button (upload arrow) loads a previously saved JSON state.
+Each tab has a transport bar at the top (Play / Pause / Stop, Save, Load, Settings, plus Show theory / Show eigenstates toggles), a parameters block paired with a vertical energy slider, and the simulation panels below.
 
-Below the simulation, a small notes section ("What you're looking at") adapts to your current settings, summarising what the prepared state looks like and what the histograms should show.
-
-The simulation automatically pauses every 10,000 measurements. Press Play to continue collecting.
+- **Play / Pause** is a single toggle. **Stop** resets the accumulated measurement histograms but keeps the parameters.
+- **Save** offers CSV or JSON; both tabs use distinct schemas (`finite-well-particle-export/v1` for Tab 1, `finite-well-comparison-export/v1` for Tab 2). Filenames begin with `fwell_single_…` (Tab 1) or `fwell_pair_…` (Tab 2) for at-a-glance disambiguation. Loading the "wrong" file type into a tab prompts a cross-import flow (pick which side / which destination).
+- **Settings** holds the per-tab preferences: measurements per cycle, max bound states shown, wavefunction time speed, random seed, language.
+- **Show eigenstates** controls eigenstate ticks on the energy slider and energy histogram, plus the live Born-probability column in Tab 1's bound-state readout. **Show theory** overlays the analytic curves on the position and energy panels.
+- **Click any numeric value** to type a value directly; typed values clamp to each control's valid range.
+- In **Tab 2**, the chain icon next to each parameter toggles whether that parameter is linked between System A and System B. The link defaults are all on (same well in both panels on first run); unlock individual parameters to compare them. Energy linking is smart: clicking the *n* = *k* tick on one side's slider while linked pairs both sides on their own *n* = *k* eigenstate (different absolute eV, same quantum number); dragging the slider pairs by eV.
+- The **Notes** section under the simulation ("What you're looking at") and **Spectroscopy** section (Tab 2 only) are collapsible — click the chevron header to expand.
 
 ## How it's built
 
-- **One React component** in [`src/ParticleQuoVadis.js`](src/ParticleQuoVadis.js). All physics, UI, and export logic live here.
-- **No build step required.** The HTML loads React via importmap, and Babel-standalone compiles the JSX in the browser at load time. This makes the source easy to read and modify — change the JSX, refresh the page, see the result.
-- **Dependencies** are React 18 and Babel-standalone, both loaded from CDNs (esm.sh and unpkg). All three CDNs are stable and widely used in educational software.
+- **One React component** in [`src/ParticleQuoVadisRedux.js`](src/ParticleQuoVadisRedux.js). All physics, UI, and export logic live here.
+- **No build step required.** The HTML loads React via UMD globals from a CDN, and Babel-standalone compiles the JSX in the browser at load time. Edit the JSX, refresh the page, see the result.
+- **Dependencies** are React 18 and Babel-standalone, both loaded from CDNs (unpkg.com).
 
 If you want to fork and modify:
 
-1. Open [`src/ParticleQuoVadis.js`](src/ParticleQuoVadis.js) in your editor.
+1. Open [`src/ParticleQuoVadisRedux.js`](src/ParticleQuoVadisRedux.js) in your editor.
 2. Make changes.
 3. Open [`index.html`](index.html) in your browser to test.
 4. No `npm install` needed.
@@ -65,33 +65,45 @@ The simplest deployment is GitHub Pages:
 
 Any other static host (Netlify, Vercel, Cloudflare Pages, your university's web space) works the same way. The simulation is a single HTML file plus its source — nothing dynamic, no backend.
 
-For local use, students can download the repository as a zip, extract it, and open `index.html` directly in their browser. Some browsers restrict ES modules loaded from `file://` URLs; if students hit this, host the files locally with a one-line static server (e.g. `python3 -m http.server` in the project folder).
+For local use, students can download the repository as a zip, extract it, and open `index.html` directly in their browser.
 
 ## Pedagogical notes
 
-The design choices behind this tool — units, default parameters, how the quantum and classical sides are made comparable, why the wall jitter exists, what the histograms actually report — are documented in [PEDAGOGY.md](PEDAGOGY.md). Worth reading if you plan to use this in a course or adapt it.
+The design choices behind this tool — the choice of ionisation as the central Tab 1 narrative, the "same prep, different system" framing for Tab 2, the units, why we keep two separate broadening parameters (Γ for state preparation, σ for instrument resolution), what is deliberately not modelled — are documented in [PEDAGOGY.md](PEDAGOGY.md). Worth reading if you plan to use this in a course or adapt it.
+
+## Sibling project
+
+The infinite-well version of this tool, [*Particle, Quo Vadis?*](https://github.com/pkennepohl/particle-quo-vadis), is the natural predecessor in a course. A reasonable teaching sequence: start there, establish quantisation and the Born rule with the infinite-wall idealisation, then bring in Redux for the finite-wall consequences (ionisation, bound-state count, orbital diffuseness) and the geometry / mass story (Tab 2).
 
 ## Example states
 
-The [`examples/`](examples/) folder contains a small set of saved simulation states demonstrating specific pedagogical points — quantization, the effect of spectral and instrumental broadening, off-eigenvalue preparation, and the contrast between ballistic and Brownian classical motion. Each example loads back into the app via the upload button. See [`examples/README.md`](examples/README.md) for a description of each example and a suggested teaching sequence.
+The [`examples/`](examples/) folder hosts saved simulation states demonstrating specific pedagogical points. Suggested seeds:
+
+- *Polyene-length comparison* — Tab 2 with L_A = 1 nm, L_B = 2 nm, m\* and V₀ linked
+- *Effective-mass contrast* — Tab 2 with m\*_A = 1, m\*_B = 0.1 (semiconductor effective electron), other knobs linked
+- *Shallow vs deep well* — Tab 2 with V₀_A = 1.5 eV, V₀_B = 10 eV
+- *Near-threshold leakage* — Tab 1 with the energy slider on the topmost bound state
+- *Photoionisation* — Tab 1 with the energy slider just above V₀
+
+You can capture your own with the **Save** button in either tab.
 
 ## Cite this
 
-If you use this tool in teaching or research, please cite it. GitHub renders a citation button from the [CITATION.cff](CITATION.cff) file; click "Cite this repository" near the top of the project page.
+If you use this tool in teaching or research, please cite it. GitHub renders a citation button from the [`CITATION.cff`](CITATION.cff) file; click "Cite this repository" near the top of the project page.
 
 ## License
 
 - **Code** (the JSX, HTML, and any JavaScript) is licensed under the [MIT License](LICENSE).
 - **Documentation and pedagogical materials** (this README, PEDAGOGY.md, screenshots, example data files) are licensed under [CC-BY-SA 4.0](LICENSE-docs).
 
-You're free to use, modify, and redistribute under those terms.
+You are free to use, modify, and redistribute under those terms.
 
 ## Contributions and feedback
 
 Feedback from instructors and students is welcome. Open an issue if you find a bug, a pedagogical flaw, or have a suggestion. Pull requests welcome but please open an issue first to discuss.
 
-This is a personal teaching project and not commercially supported. I'll respond as time allows.
+This is a personal teaching project and not commercially supported. I will respond as time allows.
 
 ## Acknowledgements
 
-This simulation was developed iteratively in conversation with Claude (Anthropic). The physics, design choices, and pedagogical framing are mine; Claude implemented the code and helped reason through visualization and UX decisions.
+Redux was developed iteratively in conversation with Claude (Anthropic). The physics, design choices, and pedagogical framing are mine; Claude implemented the code and helped reason through visualisation and UX decisions.

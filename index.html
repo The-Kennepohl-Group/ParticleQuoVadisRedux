@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Particle, Quo Vadis?</title>
-  <meta name="description" content="An interactive comparison of classical and quantum particles in a one-dimensional box. A teaching tool for chemistry and physics students." />
+  <title>Particle, Quo Vadis. Redux</title>
+  <meta name="description" content="A finite-potential-well sibling to Particle, Quo Vadis? A teaching tool for chemistry students covering ionisation, bound vs continuum states, and wavefunction leakage." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:ital,wght@0,400;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -36,21 +36,20 @@
   <div id="error"></div>
 
   <!--
-    The simulation source lives in src/ParticleQuoVadis.js for easy reading
+    The simulation source lives in src/ParticleQuoVadisRedux.js for easy reading
     and editing. Babel-standalone compiles the JSX in the browser at load time.
     No build step needed.
   -->
-  <script type="text/babel" data-presets="react" src="./src/ParticleQuoVadis.js"></script>
+  <script type="text/babel" data-presets="react" src="./src/ParticleQuoVadisRedux.js"></script>
 
   <!-- Mount the app once Babel has compiled the JSX above -->
   <script type="text/babel" data-presets="react">
-    // Wait for Babel to finish compiling the src file above
     function tryMount() {
-      if (typeof ParticleQuoVadis === 'function') {
+      if (typeof ParticleQuoVadisRedux === 'function') {
         const loading = document.getElementById('loading');
         if (loading) loading.remove();
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<ParticleQuoVadis />);
+        root.render(<ParticleQuoVadisRedux />);
       } else {
         setTimeout(tryMount, 50);
       }
@@ -59,13 +58,9 @@
   </script>
 
   <script>
-    // If something fails to load (CDN blocked, missing file, etc.), replace
-    // the "Loading…" placeholder with a useful message rather than a blank page.
-    let mounted = false;
     setTimeout(() => {
       const root = document.getElementById('root');
       if (root && root.firstElementChild && root.firstElementChild.id === 'loading') {
-        // Still showing the loading placeholder after 8 seconds — something failed.
         const loading = document.getElementById('loading');
         const errorEl = document.getElementById('error');
         if (loading) loading.style.display = 'none';

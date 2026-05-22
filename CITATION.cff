@@ -1,31 +1,41 @@
 cff-version: 1.2.0
 message: "If you use this software in teaching or research, please cite it as below."
-title: "Particle, Quo Vadis?: An interactive comparison of classical and quantum particles in a box"
+title: "Particle, Quo Vadis. Redux: An interactive simulation of a finite-well particle for chemistry teaching"
 authors:
   - family-names: Kennepohl
     given-names: Pierre
     affiliation: "University of Calgary"
     # orcid: "https://orcid.org/0000-0000-0000-0000"   # add your ORCID if you'd like
 type: software
-repository-code: "https://github.com/pkennepohl/particle-quo-vadis"
-url: "https://pkennepohl.github.io/particle-quo-vadis/"
+repository-code: "https://github.com/pkennepohl/ParticleQuoVadisRedux"
+url: "https://pkennepohl.github.io/ParticleQuoVadisRedux/"
 license: MIT
 keywords:
   - quantum mechanics
   - particle in a box
+  - finite potential well
+  - ionisation
+  - photoelectron spectroscopy
+  - quantum dot
   - chemistry education
-  - physics education
   - interactive simulation
   - teaching tool
-  - quantization
+  - quantisation
   - Born rule
 abstract: >
-  An interactive browser-based simulation comparing classical and quantum
-  particles confined to a one-dimensional box. The tool visualizes
-  measurement of position and energy, the Born rule, energy quantization,
-  the distinction between intrinsic spectral width and instrument resolution,
-  and the contrast between classical (ballistic or Brownian) and quantum
-  motion. Designed for chemistry and physics teaching at the undergraduate
-  level.
-version: 1.0.0
-date-released: 2026-05-16
+  An interactive browser-based simulation of a particle in a one-dimensional
+  finite potential well, designed as a teaching tool for undergraduate
+  chemistry. The tool extends the sibling project Particle, Quo Vadis?
+  (infinite-well case) by adding the well-depth control V0, a finite count
+  of bound states, wavefunction leakage past the walls, and a threshold
+  above which both the classical and quantum particles are reported as
+  ionised. The central chemistry narrative in the first tab is ionisation:
+  the system below V0 is a bound molecular orbital, above V0 is a
+  photoejected electron. A second tab compares two independently configured
+  finite wells side by side in real units (nm, m_e, eV) with a particle
+  preset menu and per-parameter linking between the two systems, supporting
+  the geometry- and inertia-driven energy-ladder story relevant to
+  conjugated pi-systems, cyanine dye chain-length shifts, and quantum-dot
+  fluorescence tuning.
+version: 0.2.0
+date-released: 2026-05-22

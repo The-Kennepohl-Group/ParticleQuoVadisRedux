@@ -8,11 +8,11 @@ Tabs 1 and 2 are complete and the app is ready for student use.
 
 - **Tab 1 (Depth).** Classical-vs-quantum head-to-head with V₀ slider, finite bound-state count, wavefunction past the walls, ionisation threshold, and a "quantum bound state manifold" readout (n, E_n, parity, k, 1/κ, Born |c_n|² when *Show eigenstates* is on).
 - **Tab 2 (Width).** Two quantum systems side-by-side in real units (nm, m_e, eV) with a particle preset menu (electron, light/heavy effective electron, muon, proton, deuteron, alpha), per-parameter link toggles between A and B (default: all on), smart energy linking (eigenstate tick clicks pair by *n*, slider drag pairs by eV), and a per-side Spectroscopy panel covering within-system transitions and A↔B same-*n* photon energies.
-- **Tab 3 (Shape).** Placeholder. Not implemented.
+- **Tab 3 (Shape).** Designed; not yet implemented. See "Resolved decisions" below for the locked design.
 
 Both tabs share: unified Play/Pause toggle, transport bar with Save (CSV / JSON with distinct schemas — `finite-well-particle-export/v1`, `finite-well-comparison-export/v1`), Load with cross-tab import flow, Settings modal, *Show theory* / *Show eigenstates* toggles, editable numeric values (click any number to type), collapsible Notes ("What you're looking at") and Spectroscopy sections (Tab 2 only).
 
-Next session: GitHub Pages deploy, populate `examples/` with the saved states the README mentions, then start Tab 3 design conversation.
+Next session: backlog items in any order — populate `examples/` (folder + README), fix `CITATION.cff` URL to point at https://the-kennepohl-group.github.io/ParticleQuoVadisRedux/ once Pages deploy is confirmed, or begin Tab 3 implementation against the design locked in this branch.
 
 ## Repository layout
 
@@ -36,7 +36,6 @@ Next session: GitHub Pages deploy, populate `examples/` with the saved states th
 
 ## Open questions / deferred decisions
 
-- **Tab 3 design.** Variable potential shape (rectangular / harmonic / Morse / Coulomb-like). What is the chemistry story? Vibrational quanta in a diatomic (harmonic vs Morse) is the obvious candidate. Defer the design conversation until we have seen students use Tabs 1–2.
 - **Examples folder population.** README lists five suggested seeds — polyene-length comparison, effective-mass contrast, shallow vs deep well, near-threshold leakage, photoionisation. Need to capture these as JSON files in `examples/`. Naming: `fwell_pair_polyene_lengths.json`, `fwell_pair_effective_mass.json`, `fwell_pair_well_depth.json`, `fwell_single_near_threshold.json`, `fwell_single_photoionisation.json`.
 - **Localization.** Settings modal has a language picker scaffold; only English strings exist. French would be the natural second locale given the UofC francophone constituency. Defer until requested.
 - **Deploy URL.** `CITATION.cff` lists `https://pkennepohl.github.io/ParticleQuoVadisRedux/`. Confirm or update once GitHub Pages is configured.
@@ -46,6 +45,7 @@ Next session: GitHub Pages deploy, populate `examples/` with the saved states th
 
 These were open in earlier versions of this file and have since been settled. Listed here in case the reasoning matters later.
 
+- **Tab 3 (Shape) design.** Two quantum systems side by side, mirroring Tab 2's structure (A↔B, classical comparison dropped). Each side has a shape picker: finite-square, truncated-parabolic, softened-Coulomb. The electron remains "the particle" on every shape — vibrational framing was rejected because in a vibrational problem "the particle" becomes a reduced-mass coordinate, and the silent gear-shift on what the box and wavefunction represent costs more than the harmonic-vs-Morse punchline buys for chemistry juniors. Vibrations stay as an *applied connection* in the Notes. Unified parametrisation across shapes: L = FWHM at half the well depth (nm), V₀ = depth (eV, floor at 0 on every shape — Coulomb's natural -A→0 convention shifted to match), m\* in m_e. Truncated parabolic — V(x) = min(½m\*ω²x², V₀) — preserves Tab 1's threshold/ionisation story on every shape; pure HO ladder ℏω(n+½) survives as a deep-well asymptote. Softened Coulomb's a = L/(2√3) falls out of the FWHM convention by construction. Link toggles, smart energy linking, Spectroscopy panel, defaults (all-linked, both sides finite-square on first run) all port from Tab 2 unchanged. Adaptive Notes for shape-contrast text deferred to implementation. See `PEDAGOGY.md` *Tab 3 – shape over vibration* for the full rationale.
 - **Real units in Tab 2.** Shipped: L in nm, m\* in m_e, V₀ in eV. Energy scale tied to E\* = ℏ²/(2m\*L²) with E\*_REF = 0.038100 eV at L=1 nm, m=m_e.
 - **Particle-preset picker.** Shipped: clickable `m*/m_e` label opens a menu with electron, light electron (0.067 m_e, GaAs-like), heavy electron (0.5 m_e), muon, proton, deuteron, alpha.
 - **Per-parameter linking between A and B.** Shipped: chain icon next to each of L, m\*, V₀, Γ, σ, and the energy slider. Default state is all-linked (same-vs-same on first run). Energy linking is smart — eigenstate tick clicks pair on quantum number *n*, slider drags pair on absolute eV.

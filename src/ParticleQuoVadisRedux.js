@@ -110,6 +110,523 @@ function findBoundStates(V0, maxDisplay = MAX_BOUND_STATES_DISPLAY) {
 }
 
 // =============================================================
+// TAB 3 — POTENTIAL SHAPES (dimensionless)
+// =============================================================
+//
+// Tab 3 compares three confining-potential shapes: finite-square (the
+// Tab 1–2 case), truncated-parabolic, and softened-Coulomb. The chemistry
+// payoff is qualitatively different bound-state spacings (evenly-spaced
+// for parabolic, converging for Coulomb-like); see PEDAGOGY.md
+// "Tab 3 – shape over vibration, why FWHM unifies the controls".
+//
+// The cross-shape comparison is genuinely controlled because all three
+// shapes share a unified parametrisation: L is the FWHM at V0/2, V0 is
+// the well depth, and m* is the particle mass. Using the same dimensionless
+// units as Tab 1 (L = 1, ħ²/2m = 1) the FWHM-at-V0/2 condition pins
+// each shape's free parameter:
+//   - Finite-square: walls are vertical, V(x') = 0 for |x'| ≤ 1/2 and V0
+//     otherwise. FWHM = 1 by construction.
+//   - Truncated-parabolic: V(x') = min(½ ω² x'², V0). FWHM = 2√(V0/ω²)
+//     = 1 gives ω² = 4 V0, so V(x') = min(2 V0 x'², V0). The parabolic
+//     flanks join the V0 ceiling at x' = ±1/√2 ≈ ±0.707.
+//   - Softened-Coulomb: V(x') = V0 (1 − 1/√(12 x'² + 1)). This is the
+//     atomic-physics form −A/√(x²+a²), shifted in convention so the
+//     floor is at 0 and the asymptote at V0 = A/a (so the threshold
+//     story matches the other two shapes), with FWHM = 2 a √3 = 1
+//     giving a = 1/(2√3). Substituting (A = V0/(2√3), a² = 1/12) gives
+//     the form above.
+//
+// Tab 3 centres every shape at x' = 0 (well runs from −L/2 to +L/2 in
+// real coordinates), a different convention from Tab 1/2's 0-to-L wells
+// for the same finite-square potential. This buys uniform parity labels
+// (every shape is symmetric about x' = 0, so eigenstates alternate even/
+// odd starting from n = 1 even) and a single position-axis rule for the
+// whole tab; cross-tab import shifts coordinates at the seam.
+
+function V_tab3(shape, V0, xPrime) {
+  switch (shape) {
+    case 'finite-square':
+      return Math.abs(xPrime) <= 0.5 ? 0 : V0;
+    case 'truncated-parabolic':
+      return Math.min(2 * V0 * xPrime * xPrime, V0);
+    case 'softened-coulomb':
+      return V0 * (1 - 1 / Math.sqrt(12 * xPrime * xPrime + 1));
+    default:
+      throw new Error('V_tab3: unknown shape ' + shape);
+  }
+}
+
+// =============================================================
+// TAB 3 — FINITE-DIFFERENCE SYMMETRIC TRIDIAGONAL EIGENSOLVER
+// =============================================================
+//
+// Shapes other than finite-square have no closed-form bound spectrum, so
+// we discretise the Schrödinger equation on a uniform x'-grid:
+//   −ψ''(x') + V(x') ψ = E ψ                        (dimensionless)
+// with second-order central differences and Dirichlet boundaries
+// (ψ = 0 at the grid edges, physically right for bound states once the
+// grid is wide enough that the wavefunction has decayed). The Hamiltonian
+// is symmetric tridiagonal:
+//   H_ii = 2/h² + V_i
+//   H_{i,i±1} = −1/h²
+// We need only the bound eigenpairs (E < V0), not the full spectrum, and
+// the matrix is tridiagonal — so two tridiagonal-specific algorithms
+// fit naturally:
+//   1. Sturm-sequence bisection counts eigenvalues below a probe value λ
+//      via the LDLᵀ recurrence  q_0 = d_0 − λ,  q_k = (d_k − λ) − e_{k-1}²/q_{k-1};
+//      the number of negative q_k equals the eigenvalue count below λ.
+//      Bisecting on a bracket where the count jumps by exactly 1
+//      isolates a single eigenvalue.
+//   2. Inverse iteration recovers the eigenvector: solve (H − λI) y = x
+//      by Thomas algorithm (O(N) on tridiagonal), renormalise, iterate.
+//      With λ already very close to an eigenvalue the convergence
+//      ratio is tiny and 4–5 iterations are graphically converged.
+// Cost is O(N) per eigenvalue or eigenvector, so a 512-grid problem with
+// 8 bound states is ~10⁴ flops — invisible to render time.
+
+function sturmCount(diag, offDiag, lambda) {
+  const N = diag.length;
+  let q = diag[0] - lambda;
+  let count = q < 0 ? 1 : 0;
+  for (let i = 1; i < N; i++) {
+    // Guard against the rare q = 0 case (λ hits an exact eigenvalue):
+    // a tiny non-zero substitute preserves the sign-flip count.
+    if (Math.abs(q) < 1e-300) q = 1e-300;
+    q = (diag[i] - lambda) - (offDiag[i - 1] * offDiag[i - 1]) / q;
+    if (q < 0) count++;
+  }
+  return count;
+}
+
+function findEigenvalueByBisection(diag, offDiag, lo, hi, targetCount, tol) {
+  // Bisect on the Sturm count function until the bracket contains
+  // exactly one eigenvalue (the one with index targetCount).
+  for (let iter = 0; iter < 80; iter++) {
+    if (hi - lo < tol) break;
+    const mid = 0.5 * (lo + hi);
+    const c = sturmCount(diag, offDiag, mid);
+    if (c >= targetCount) hi = mid; else lo = mid;
+  }
+  return 0.5 * (lo + hi);
+}
+
+function solveTridiagonalThomas(subDiag, mainDiag, superDiag, rhs) {
+  // Thomas algorithm for a (possibly non-symmetric) tridiagonal system.
+  // For our shifted matrix H − λI the subdiagonal and superdiagonal are
+  // both equal to −1/h², but the algorithm takes both arrays so it can
+  // operate on copies the caller modifies between iterations.
+  const N = mainDiag.length;
+  const c = new Float64Array(N - 1);
+  const d = new Float64Array(N);
+  let beta = mainDiag[0];
+  if (Math.abs(beta) < 1e-300) beta = 1e-300;
+  d[0] = rhs[0] / beta;
+  if (N > 1) c[0] = superDiag[0] / beta;
+  for (let i = 1; i < N; i++) {
+    beta = mainDiag[i] - subDiag[i - 1] * c[i - 1];
+    if (Math.abs(beta) < 1e-300) beta = 1e-300;
+    if (i < N - 1) c[i] = superDiag[i] / beta;
+    d[i] = (rhs[i] - subDiag[i - 1] * d[i - 1]) / beta;
+  }
+  const x = new Float64Array(N);
+  x[N - 1] = d[N - 1];
+  for (let i = N - 2; i >= 0; i--) x[i] = d[i] - c[i] * x[i + 1];
+  return x;
+}
+
+function inverseIterate(diag, offDiag, lambda, maxIter = 5) {
+  const N = diag.length;
+  const shifted = new Float64Array(N);
+  for (let i = 0; i < N; i++) shifted[i] = diag[i] - lambda;
+  // Deterministic pseudo-random starting vector: a mulberry32 seeded
+  // identically every call so the same (shape, V0, m*, L) input gives the
+  // same eigenvectors. Random (not sine/cosine) so it has non-zero
+  // overlap with every eigenvector regardless of parity.
+  let s = 0x9e3779b9 >>> 0;
+  const rng = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1) >>> 0;
+    t ^= (t + Math.imul(t ^ (t >>> 7), t | 61)) >>> 0;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let x = new Float64Array(N);
+  for (let i = 0; i < N; i++) x[i] = rng() - 0.5;
+  for (let k = 0; k < maxIter; k++) {
+    x = solveTridiagonalThomas(offDiag, shifted, offDiag, x);
+    let n2 = 0;
+    for (let i = 0; i < N; i++) n2 += x[i] * x[i];
+    n2 = Math.sqrt(n2);
+    if (n2 === 0) break;
+    for (let i = 0; i < N; i++) x[i] /= n2;
+  }
+  return x;
+}
+
+// =============================================================
+// TAB 3 — DIMENSIONLESS SHAPE-AGNOSTIC SOLVER
+// =============================================================
+//
+// All three shapes return the same flat object:
+//   { xGrid, V, states: [{ n, E, parity, psi }] }
+// xGrid and V are Float64Arrays on a uniform grid centred at x' = 0;
+// each state's psi is also a Float64Array on that grid, normalised so
+// that ∫|psi|² dx' = 1 by trapezoidal integration (matching the FD
+// inner product). The finite-square branch additionally attaches the
+// analytical {k, kappa, A} to each state so Tab 1/2's existing pointwise
+// machinery (finiteWellPsi, densityAt) can keep operating on the same
+// state objects after a cross-tab import; FD branches do not.
+//
+// Grid extent and resolution adapt to V0:
+//   extent (half-width)  = max(1.5, 1 + 8/√V0)
+//   N                    = 512, bumped to 1024 / 2048 / 4096 if the
+//                          tightest in-well wavelength would alias.
+// The extent rule keeps the boundary well past the wavefunction tail
+// for every shape (the exterior decay is exponential with κ = √(V0 − E)
+// in dimensionless units, the same on all three shapes); the resolution
+// rule keeps at least ~25 grid points per oscillation of the deepest
+// bound state.
+
+const TAB3_FD_N_MIN = 512;
+const TAB3_FD_N_MAX = 4096;
+const TAB3_FD_POINTS_PER_WAVELENGTH = 25;
+
+function tab3PickGrid(V0) {
+  const halfWidth = Math.max(1.5, 1 + 8 / Math.sqrt(Math.max(V0, 1e-6)));
+  let N = TAB3_FD_N_MIN;
+  const kMax = Math.sqrt(Math.max(V0, 0));
+  while (N < TAB3_FD_N_MAX) {
+    const h = (2 * halfWidth) / (N - 1);
+    if (h * kMax * TAB3_FD_POINTS_PER_WAVELENGTH < 2 * Math.PI) break;
+    N *= 2;
+  }
+  return { halfWidth, N };
+}
+
+function solveTab3Shape_internal(shape, V0, maxStates) {
+  if (V0 <= 0) {
+    return { xGrid: new Float64Array(0), V: new Float64Array(0), states: [] };
+  }
+
+  // Build the x-grid on [−halfWidth, +halfWidth] with N points. h is the
+  // grid spacing in dimensionless units. The well runs from x' = −1/2
+  // to +1/2 (in finite-square; the parabolic flank ends and the Coulomb
+  // is centred at x' = 0).
+  const { halfWidth, N } = tab3PickGrid(V0);
+  const h = (2 * halfWidth) / (N - 1);
+  const xGrid = new Float64Array(N);
+  const V = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = -halfWidth + i * h;
+    xGrid[i] = x;
+    V[i] = V_tab3(shape, V0, x);
+  }
+
+  // FD operator: tridiagonal Hamiltonian on the interior grid points
+  // (Dirichlet BC ψ_0 = ψ_{N-1} = 0 baked in implicitly). The interior
+  // has N-2 unknowns; off-diagonal length N-3.
+  const Ni = N - 2;
+  const diag = new Float64Array(Ni);
+  const offDiag = new Float64Array(Ni - 1);
+  const invH2 = 1 / (h * h);
+  for (let i = 0; i < Ni; i++) diag[i] = 2 * invH2 + V[i + 1];
+  for (let i = 0; i < Ni - 1; i++) offDiag[i] = -invH2;
+
+  // Count bound states below V0, capped at maxStates.
+  const eigenvalueTol = 1e-9;
+  const boundCount = Math.min(sturmCount(diag, offDiag, V0), maxStates);
+
+  // For each bound state, bisect to isolate its eigenvalue and run
+  // inverse iteration for the eigenvector. The eigenvalue index is the
+  // target Sturm count; the bracket is [0, V0] for now (Gerschgorin
+  // bounds the spectrum to [0, V0 + 4/h²] but we only want the bound
+  // part). Inside the loop we narrow the bracket using the previous
+  // eigenvalue as the new lower bound — cheap acceleration.
+  const states = [];
+  let lo = 0;
+  for (let k = 0; k < boundCount; k++) {
+    const E = findEigenvalueByBisection(diag, offDiag, lo, V0, k + 1, eigenvalueTol);
+    const psiInterior = inverseIterate(diag, offDiag, E);
+
+    // Place the interior eigenvector back onto the full N-point grid
+    // (boundary points are zero by Dirichlet BC).
+    const psi = new Float64Array(N);
+    for (let i = 0; i < Ni; i++) psi[i + 1] = psiInterior[i];
+
+    // Trapezoidal normalisation. Then enforce a sign convention so the
+    // leftmost large-amplitude lobe is positive — keeps the rendered ψ
+    // looking the same across reloads.
+    let norm = 0;
+    for (let i = 0; i < N; i++) {
+      const w = (i === 0 || i === N - 1) ? 0.5 : 1;
+      norm += w * psi[i] * psi[i];
+    }
+    norm = Math.sqrt(norm * h);
+    if (norm > 0) for (let i = 0; i < N; i++) psi[i] /= norm;
+    // Sign convention: pick the first interior extremum and force it
+    // positive. This is stable across runs because the FD eigenvector
+    // sign is otherwise arbitrary.
+    let firstExtremum = 0;
+    for (let i = 1; i < N - 1; i++) {
+      if (Math.abs(psi[i]) > Math.abs(firstExtremum)) firstExtremum = psi[i];
+      if (Math.abs(psi[i]) > 0.3 / Math.sqrt(2 * halfWidth)) break;
+    }
+    if (firstExtremum < 0) for (let i = 0; i < N; i++) psi[i] = -psi[i];
+
+    // Classify parity by comparing ψ(x) and ψ(−x). For exactly-symmetric
+    // potentials the FD eigenvectors are even or odd to numerical
+    // precision; we still measure rather than alternating-by-index to be
+    // robust against near-degeneracies.
+    let pEven = 0, pOdd = 0;
+    for (let i = 0; i < N; i++) {
+      const j = N - 1 - i;
+      const sumPart = psi[i] + psi[j];
+      const diffPart = psi[i] - psi[j];
+      pEven += sumPart * sumPart;
+      pOdd += diffPart * diffPart;
+    }
+    const parity = pEven >= pOdd ? 'even' : 'odd';
+
+    states.push({ n: k + 1, E, parity, psi });
+    lo = E;
+  }
+
+  return { xGrid, V, states, h };
+}
+
+function solveTab3FiniteSquare_internal(V0, maxStates) {
+  // Re-use Tab 1/2's transcendental solver verbatim, then sample the
+  // analytical wavefunctions onto the same x'-grid the FD solver uses.
+  // This keeps the downstream Tab 3 renderer shape-agnostic (every shape
+  // has xGrid + V + psi-on-the-grid) while preserving the analytical
+  // (k, kappa, A) on each state for cross-tab import back to Tab 1/2.
+  if (V0 <= 0) {
+    return { xGrid: new Float64Array(0), V: new Float64Array(0), states: [] };
+  }
+  const tabOne = findBoundStates(V0, maxStates);
+
+  const { halfWidth, N } = tab3PickGrid(V0);
+  const h = (2 * halfWidth) / (N - 1);
+  const xGrid = new Float64Array(N);
+  const V = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = -halfWidth + i * h;
+    xGrid[i] = x;
+    V[i] = V_tab3('finite-square', V0, x);
+  }
+
+  // Analytical ψ for a symmetric well centred at x' = 0: cos(k x') for
+  // even-parity inside, sin(k x') for odd-parity inside, exponential
+  // tails outside. Already normalised analytically by `normalize()`.
+  const states = tabOne.map(s => {
+    const psi = new Float64Array(N);
+    const halfL = 0.5;
+    const sgn = s.parity === 'odd' ? Math.sign : () => 1;
+    const insideValue = s.parity === 'even'
+      ? (x) => s.A * Math.cos(s.k * x)
+      : (x) => s.A * Math.sin(s.k * x);
+    const wallEven = s.A * Math.cos(s.k * halfL);
+    const wallOdd  = s.A * Math.sin(s.k * halfL);
+    for (let i = 0; i < N; i++) {
+      const x = xGrid[i];
+      if (Math.abs(x) <= halfL) {
+        psi[i] = insideValue(x);
+      } else if (s.parity === 'even') {
+        psi[i] = wallEven * Math.exp(-s.kappa * (Math.abs(x) - halfL));
+      } else {
+        psi[i] = sgn(x) * wallOdd * Math.exp(-s.kappa * (Math.abs(x) - halfL));
+      }
+    }
+    return {
+      n: s.n,
+      E: s.E,
+      parity: s.parity,
+      psi,
+      k: s.k,
+      kappa: s.kappa,
+      A: s.A,
+    };
+  });
+
+  return { xGrid, V, states, h };
+}
+
+function solveTab3Shape(shape, V0, maxStates) {
+  if (shape === 'finite-square') return solveTab3FiniteSquare_internal(V0, maxStates);
+  return solveTab3Shape_internal(shape, V0, maxStates);
+}
+
+// =============================================================
+// TAB 3 — CLASSICAL TURNING POINT
+// =============================================================
+//
+// At slider energy E_set, the classical region is |x| ≤ x_t where
+// V(x_t) = E_set. Used to position the "walls" of the visualisation
+// and to count quantum probability that has leaked past the classical
+// boundary — the chemistry meaning of P_out is "fraction of the bound
+// state's |ψ|² that lives in the classically forbidden region".
+//
+// Finite-square is degenerate: V jumps at ±L/2, so the turning point
+// is at the wall regardless of E (same as Tab 1/2's convention).
+// Parabolic and Coulomb both shift their turning points with E.
+// Coulomb's turning point diverges as E → V₀ from below; we clamp at
+// 100 L to keep the wall on-panel rather than off in infinity.
+
+function classicalTurningPointNm(shape, lengthNm, v0eV, energyEv) {
+  if (!Number.isFinite(energyEv) || energyEv <= 0) return 0;
+  if (energyEv >= v0eV) return Infinity;          // unbound regime
+  switch (shape) {
+    case 'finite-square':
+      return lengthNm / 2;
+    case 'truncated-parabolic': {
+      // V = 2 V₀ (x/L)² = E  →  x = L √(E / 2V₀)
+      const u = Math.sqrt(energyEv / (2 * v0eV));
+      return Math.min(lengthNm * u, 100 * lengthNm);
+    }
+    case 'softened-coulomb': {
+      // V = V₀ (1 − 1/√(12 (x/L)² + 1)) = E
+      //   →  (x/L)² = ((V₀/(V₀−E))² − 1) / 12
+      const ratio = v0eV / Math.max(v0eV - energyEv, 1e-9);
+      const u2 = (ratio * ratio - 1) / 12;
+      return Math.min(lengthNm * Math.sqrt(Math.max(u2, 0)), 100 * lengthNm);
+    }
+    default:
+      return lengthNm / 2;
+  }
+}
+
+// Build the time-averaged "expected" |ψ(x)|² density curve for Tab 3's
+// position histogram theory overlay. The curve is in the same
+// well-at-[0, 1] engine convention the histogram bars use, so it can
+// be drawn directly on the same panel. ψ values come from the FD
+// grid (in nm with units 1/√nm), so the squared amplitude is in 1/nm;
+// we multiply by lengthNm at the end to convert the density to the
+// histogram's 1/engine_x units (since dx_engine = dx_nm / lengthNm).
+//
+// Time-average: for a Lorentzian-weighted superposition the cross
+// terms in |Σ c_n ψ_n exp(-iE_n t)|² oscillate at (E_n − E_m) and
+// average to zero, leaving Σ |c_n|² |ψ_n|². So the theory curve is
+// shape-independent in form — same expression on every Tab 3 shape.
+function makePosTheoryTab3(states, probs, xGrid_nm, lengthNm) {
+  if (!states.length || !xGrid_nm.length) return null;
+  const N = 240;
+  const arr = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const x_engine = X_PLOT_MIN + (X_PLOT_RANGE * i) / (N - 1);
+    const x_nm = x_engine * lengthNm - lengthNm / 2;
+    let d = 0;
+    for (let k = 0; k < states.length; k++) {
+      const psi = psiOnGrid(states[k], xGrid_nm, x_nm);
+      d += probs[k] * psi * psi;
+    }
+    arr[i] = { x: x_engine, d: d * lengthNm };
+  }
+  return arr;
+}
+
+// Build the expected energy distribution P(E) for the energy histogram
+// theory overlay. Returns { bound, continuum } pairs of {E, d} samples
+// in eV. The bound part is F(V₀) × Σ |c_n|² × Gauss(E−E_n, σ), where
+// F(V₀) is the Lorentzian CDF at V₀ (the fraction of the prep that
+// lives in the bound spectrum). The continuum part is the prep
+// Lorentzian (above V₀) convolved with the instrument Gaussian σ —
+// the ionised tail of the energy distribution. Shape-agnostic: the
+// only inputs are eigenvalues, weights, and the broadening parameters,
+// so it works on every Tab 3 shape unchanged.
+function makeEnergyTheoryShared(states, probs, sigmaX, gammaX, eStarX, V0IntX, v0X, energyX, eHistMaxX) {
+  if (!states.length) return null;
+  const N = 240;
+  const eBinW = eHistMaxX / NBINS_E;
+  const sigmaEff = Math.max(sigmaX, eBinW / Math.sqrt(2 * Math.PI));
+  const norm = 1 / (sigmaEff * Math.sqrt(2 * Math.PI));
+  const twoSig2 = 2 * sigmaEff * sigmaEff;
+  const gammaIntX = Math.max(GAMMA_INTERNAL_MIN, 1 + gammaX / eStarX);
+  const gammaEvEff = gammaIntX * eStarX;
+  const gamHalf = gammaEvEff / 2;
+  const Fbound = lorentzCDF(V0IntX, energyX / eStarX, gammaIntX);
+
+  const NC = 200;
+  const Emax = Math.max(eHistMaxX * 1.5, energyX + 10 * gammaEvEff, v0X + 10 * gammaEvEff);
+  const dEc = (Emax - v0X) / NC;
+  const lorW = new Float64Array(NC);
+  const Ep = new Float64Array(NC);
+  for (let j = 0; j < NC; j++) {
+    Ep[j] = v0X + (j + 0.5) * dEc;
+    const dEp = Ep[j] - energyX;
+    lorW[j] = (gamHalf / Math.PI) / (dEp * dEp + gamHalf * gamHalf) * dEc;
+  }
+
+  const bound = new Array(N);
+  const continuum = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const E = (eHistMaxX * i) / (N - 1);
+    let dB = 0;
+    for (let k = 0; k < states.length; k++) {
+      const dE = E - states[k].E * eStarX;
+      dB += probs[k] * norm * Math.exp(-(dE * dE) / twoSig2);
+    }
+    bound[i] = { E, d: Fbound * dB };
+    let dC = 0;
+    for (let j = 0; j < NC; j++) {
+      const dEp = E - Ep[j];
+      dC += lorW[j] * norm * Math.exp(-(dEp * dEp) / twoSig2);
+    }
+    continuum[i] = { E, d: dC };
+  }
+  return { bound, continuum };
+}
+
+// =============================================================
+// TAB 3 — GRID-INTERPOLATED ψ SAMPLING
+// =============================================================
+//
+// Tab 1/2's pointwise machinery (finiteWellPsi, densityAt) is analytical
+// and convention-bound to the well-at-[0, L] geometry. Tab 3 needs the
+// same pointwise interface to drive its visualisation and simulation
+// loop, but on shapes where ψ is only available on the FD grid and in
+// the well-at-[-L/2, +L/2] convention. The two helpers below are the
+// drop-in replacements: psiOnGrid(state, x) linearly interpolates the
+// state's pre-computed ψ at any x, and densityAtTab3 builds the
+// time-evolved |Σ c_n ψ_n exp(-iE_n t)|² from those interpolations.
+// xGrid is uniform so the index can be computed directly without a
+// binary search; off-grid queries return 0 (the FD boundary is far
+// enough out that ψ has already decayed below graphical relevance).
+
+function psiOnGrid(state, xGrid, xQuery) {
+  const N = xGrid.length;
+  if (N < 2) return 0;
+  const h = xGrid[1] - xGrid[0];  // uniform grid by construction
+  const fIdx = (xQuery - xGrid[0]) / h;
+  if (fIdx <= 0 || fIdx >= N - 1) return 0;
+  const i = Math.floor(fIdx);
+  const frac = fIdx - i;
+  return state.psi[i] + frac * (state.psi[i + 1] - state.psi[i]);
+}
+
+function densityAtTab3(states, probs, xQuery, t, xGrid) {
+  let re = 0, im = 0;
+  for (let i = 0; i < states.length; i++) {
+    if (probs[i] < 1e-14) continue;
+    const psi = psiOnGrid(states[i], xGrid, xQuery);
+    if (psi === 0) continue;
+    const c = Math.sqrt(probs[i]);
+    const ph = -states[i].E * t;          // state.E is dimensionless engine energy
+    re += c * psi * Math.cos(ph);
+    im += c * psi * Math.sin(ph);
+  }
+  return re * re + im * im;
+}
+
+function densityGridTab3(states, probs, t, xMin, xMax, N, xGrid) {
+  const out = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = xMin + (xMax - xMin) * i / (N - 1);
+    out[i] = densityAtTab3(states, probs, x, t, xGrid);
+  }
+  return out;
+}
+
+// =============================================================
 // QUANTUM HELPERS — state preparation and sampling
 // =============================================================
 //
@@ -131,6 +648,22 @@ function findBoundStates(V0, maxDisplay = MAX_BOUND_STATES_DISPLAY) {
 function computeProbs(E_set, gammaInternal, states) {
   const w = new Float64Array(states.length);
   if (states.length === 0) return w;
+  // Γ_displayed = 0 (i.e. internal at the GAMMA_INTERNAL_MIN floor of 1)
+  // is the user's signal for "pure eigenstate preparation": pick the
+  // closest eigenstate, weight 1, ignore the rest. Without this
+  // special-case the residual Lorentzian width (kept to avoid the 1/0
+  // singularity at d = 0) would leak into neighbouring states and into
+  // the continuum tail past V₀ — small but pedagogically misleading
+  // when the user expects Γ = 0 to mean a single state.
+  if (gammaInternal <= GAMMA_INTERNAL_MIN) {
+    let bestI = 0, bestD = Math.abs(states[0].E - E_set);
+    for (let i = 1; i < states.length; i++) {
+      const d = Math.abs(states[i].E - E_set);
+      if (d < bestD) { bestD = d; bestI = i; }
+    }
+    w[bestI] = 1;
+    return w;
+  }
   const half = gammaInternal / 2;
   let sum = 0;
   for (let i = 0; i < states.length; i++) {
@@ -207,13 +740,31 @@ function sampleEnergyIdx(probs, rng = Math.random) {
 // prepared state that is actually ionised. The naive bound-only
 // renormalisation throws this away — important to capture near V0
 // where the tails are still tall.
+//
+// Special-case Γ_displayed = 0 (internal = GAMMA_INTERNAL_MIN): the
+// preparation collapses to a delta at ESet, so CDF is a step function:
+// 1 if E > ESet, 0 if E < ESet. Without this, a Γ-internal-of-1 residual
+// would route a few percent of measurements through the continuum
+// branch even when the prep is set well below V₀ — pedagogically
+// misleading because Γ = 0 is the user's "pure state" signal.
 function lorentzCDF(E, ESet, gammaInternal) {
+  if (gammaInternal <= GAMMA_INTERNAL_MIN) {
+    return E > ESet ? 1 : (E < ESet ? 0 : 0.5);
+  }
   return 0.5 + Math.atan((E - ESet) / (gammaInternal / 2)) / Math.PI;
 }
 
 // Inverse Lorentzian CDF truncated to E > cutoff. Used to sample
 // continuum energies for the energy histogram bars above V0.
+// Special-case Γ_displayed = 0 (internal = GAMMA_INTERNAL_MIN): the
+// preparation is a delta at ESet, so all samples are ESet itself.
+// Caller only takes this branch when CDF < 1 — i.e. when ESet > V0 —
+// so returning ESet directly is correct (the delta lies above the
+// cutoff).
 function sampleLorentzAbove(cutoff, ESet, gammaInternal, rng = Math.random) {
+  if (gammaInternal <= GAMMA_INTERNAL_MIN) {
+    return Math.max(ESet, cutoff);
+  }
   const F0 = lorentzCDF(cutoff, ESet, gammaInternal);
   const u  = F0 + rng() * (1 - F0);
   // Inverse CDF of the (untruncated) Lorentzian.
@@ -279,7 +830,12 @@ const V0_MIN = 20;
 const V0_MAX = 600;
 const E_SLIDER_MIN = 5;
 function eAxisMaxForV0(V0) {
-  return Math.round(1.4 * V0);
+  // 30 % headroom above V₀ for ionised-region flashes and continuum
+  // theory. Was 40 % originally; trimmed because the upper third of
+  // the panel sees relatively few events (continuum events fade fast
+  // with E above V₀) and the visual top-heaviness drew the eye away
+  // from the bound spectrum.
+  return Math.round(1.3 * V0);
 }
 
 const SIGMA_MIN = 0;
@@ -455,6 +1011,135 @@ function realToInternal(lengthNm, mEffMe, v0eV) {
     eStarEv:    eStar,
     V0Internal: v0eV / eStar,
     eToEv:      (Ei) => Ei * eStar,
+  };
+}
+
+// =============================================================
+// TAB 3 — SHAPE-AWARE SOLVER (real units, cached)
+// =============================================================
+//
+// Public entry point for Tab 3's UI. Converts real-units (L_nm, V0_eV,
+// mEff_me) to the dimensionless engine, dispatches to the right solver
+// (analytical for finite-square, FD for parabolic and Coulomb), and
+// caches the result. The cache key is rounded to slider-resolution so
+// adjacent slider positions that quantise to the same value share an
+// entry; the live UI hits the cache continuously while a slider sits
+// still.
+
+const TAB3_CACHE_MAX = 64;
+const tab3SpectrumCache = new Map();
+
+function tab3CacheKey(shape, lengthNm, mEffMe, v0eV, maxStates) {
+  // Round to slider-resolution: L step 0.05 nm, V0 step 0.1 eV, m presets
+  // are exact. 3-4 sig figs everywhere else.
+  const L  = Math.round(lengthNm * 1e6) / 1e6;
+  const M  = Math.round(mEffMe * 1e6) / 1e6;
+  const V  = Math.round(v0eV * 1e6) / 1e6;
+  return shape + '|' + L + '|' + M + '|' + V + '|' + maxStates;
+}
+
+function tab3CachePut(key, value) {
+  if (tab3SpectrumCache.has(key)) {
+    tab3SpectrumCache.delete(key);
+    tab3SpectrumCache.set(key, value);
+    return;
+  }
+  if (tab3SpectrumCache.size >= TAB3_CACHE_MAX) {
+    const oldestKey = tab3SpectrumCache.keys().next().value;
+    tab3SpectrumCache.delete(oldestKey);
+  }
+  tab3SpectrumCache.set(key, value);
+}
+
+function getBoundStatesTab3({ shape, lengthNm, mEffMe, v0eV, maxStates }) {
+  const cap = Math.min(maxStates ?? MAX_BOUND_STATES_DISPLAY, MAX_BOUND_STATES_DISPLAY);
+  const key = tab3CacheKey(shape, lengthNm, mEffMe, v0eV, cap);
+  const hit = tab3SpectrumCache.get(key);
+  if (hit) {
+    // Touch (LRU): re-insert.
+    tab3SpectrumCache.delete(key);
+    tab3SpectrumCache.set(key, hit);
+    return hit;
+  }
+
+  const { eStarEv: eStar, V0Internal } = realToInternal(lengthNm, mEffMe, v0eV);
+  const raw = solveTab3Shape(shape, V0Internal, cap);
+
+  // Convert dimensionless engine output to the real-units representation
+  // the UI consumes. xGrid_nm is xGrid_internal × L_nm because the
+  // dimensionless coordinate x' is x in units of L. ψ in nm^(−½) is
+  // ψ_internal / √L_nm so the trapezoidal normalisation survives the
+  // change of variable.
+  const N = raw.xGrid.length;
+  const xGrid_nm = new Float64Array(N);
+  const V_eV = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    xGrid_nm[i] = raw.xGrid[i] * lengthNm;
+    V_eV[i] = raw.V[i] * eStar;
+  }
+  const psiScale = 1 / Math.sqrt(lengthNm);
+  const states = raw.states.map(s => {
+    const psi_nm = new Float64Array(N);
+    for (let i = 0; i < N; i++) psi_nm[i] = s.psi[i] * psiScale;
+    const out = {
+      n: s.n,
+      E: s.E,                 // dimensionless engine energy (matches Tab 1/2 convention)
+      E_eV: s.E * eStar,
+      parity: s.parity,
+      psi: psi_nm,
+    };
+    // Finite-square retains the analytical (k, kappa, A) so cross-tab
+    // import back to Tab 1/2 lands straight in the existing pointwise
+    // machinery without a refit. These are still dimensionless because
+    // Tab 1/2's downstream code expects them that way.
+    if (s.k !== undefined) {
+      out.k = s.k;
+      out.kappa = s.kappa;
+      out.A = s.A;
+    }
+    return out;
+  });
+
+  const result = {
+    shape,
+    lengthNm,
+    mEffMe,
+    v0eV,
+    eStarEv: eStar,
+    xGrid_nm,
+    V_eV,
+    states,
+  };
+  tab3CachePut(key, result);
+  return result;
+}
+
+// Dev-only validation: invoke from the browser devtools as
+// window.__validateTab3Solver() to compare the FD finite-square branch
+// against the analytical transcendental solver. Numbers should agree to
+// a few parts in 10⁴ on eigenvalues at the default grid resolution; the
+// wavefunction RMS difference should be well under 1 %. Disabled by
+// default (no auto-run) so it doesn't pollute the production console.
+if (typeof window !== 'undefined') {
+  window.__validateTab3Solver = function () {
+    const lines = [];
+    const cases = [
+      { V0: 25,  label: 'V0=25  (few states)' },
+      { V0: 100, label: 'V0=100 (moderate)'   },
+      { V0: 400, label: 'V0=400 (deep)'       },
+    ];
+    for (const { V0, label } of cases) {
+      const analytical = solveTab3FiniteSquare_internal(V0, 8);
+      const fd         = solveTab3Shape_internal('finite-square', V0, 8);
+      lines.push(`--- ${label} ---`);
+      const nMin = Math.min(analytical.states.length, fd.states.length);
+      for (let i = 0; i < nMin; i++) {
+        const Ea = analytical.states[i].E;
+        const Ef = fd.states[i].E;
+        lines.push(`  n=${i+1}  E_anal=${Ea.toFixed(6)}  E_FD=${Ef.toFixed(6)}  rel.err=${((Ef-Ea)/Ea).toExponential(2)}  parity ${analytical.states[i].parity}/${fd.states[i].parity}`);
+      }
+    }
+    console.log(lines.join('\n'));
   };
 }
 
@@ -802,7 +1487,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
           }
           qFlashCounterRef.current++;
           if (qFlashCounterRef.current % FLASH_EVERY_N === 0) {
-            qRecentXRef.current.push({ x: xSamp, age: 0 });
+            // The position flash also carries its energy so the
+            // wavefunction view can place the dot at the (x, E) pair
+            // the measurement actually produced — y on the panel
+            // tracks the energy axis, not just a fixed floor line.
+            qRecentXRef.current.push({ x: xSamp, E: eReported, age: 0 });
             if (qRecentXRef.current.length > FLASH_BUFFER_MAX) qRecentXRef.current.shift();
             qRecentERef.current.push({ E: eReported, age: 0 });
             if (qRecentERef.current.length > FLASH_BUFFER_MAX) qRecentERef.current.shift();
@@ -840,7 +1529,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
       }
 
       // Age flash markers once per frame and prune the expired ones.
-      const ageX = (m) => ({ x: m.x, age: m.age + 1 });
+      const ageX = (m) => ({ x: m.x, E: m.E, age: m.age + 1 });
       const ageE = (m) => ({ E: m.E, age: m.age + 1 });
       const live = (m) => m.age < FLASH_AGE;
       recentXRef.current  = recentXRef.current.map(ageX).filter(live);
@@ -1034,8 +1723,24 @@ function Tab1Content({ activeTab, onChangeTab }) {
       setPendingCrossImport(payload);
       return false;
     }
+    // Tab 3 file: only meaningful for Tab 1 if at least one side is
+    // finite-square. Refuse with a friendly message otherwise — the
+    // alternative is silently substituting an unrelated shape, which
+    // the locked design rules out.
+    if (payload.schema === 'finite-well-shape-comparison-export/v1') {
+      const sa = payload.meta?.A?.shape || 'finite-square';
+      const sb = payload.meta?.B?.shape || 'finite-square';
+      const aOk = sa === 'finite-square';
+      const bOk = sb === 'finite-square';
+      if (!aOk && !bOk) {
+        alert(`This file uses shapes only Tab 3 can display (A: ${sa}, B: ${sb}). Tab 1's finite-square well can't substitute for the parabolic or Coulomb shape on either side.`);
+        return false;
+      }
+      setPendingCrossImport(payload);
+      return false;
+    }
     if (payload.schema !== 'finite-well-particle-export/v1') {
-      alert(`Unsupported file: schema "${payload.schema || 'unknown'}". This app loads "finite-well-particle-export/v1" or "finite-well-comparison-export/v1" files.`);
+      alert(`Unsupported file: schema "${payload.schema || 'unknown'}". This app loads "finite-well-particle-export/v1", "finite-well-comparison-export/v1", or "finite-well-shape-comparison-export/v1" files.`);
       return false;
     }
     const m = payload.meta || {};
@@ -1149,6 +1854,34 @@ function Tab1Content({ activeTab, onChangeTab }) {
     setGammaInternal(gInt);
     setSigma(sigEngine);
     // Reset measurement state so the new parameters get clean stats.
+    handleStop();
+    setPendingCrossImport(null);
+  }
+
+  // Cross-import from a Tab 3 shape-comparison file. Only the
+  // finite-square side(s) can land here — the modal pre-filters non-
+  // square sides via the disabled-button branch below — so the
+  // conversion uses the same real-units → engine mapping as the Tab 2
+  // case. The shape field is discarded (Tab 1 has no shape state).
+  function applyTab3SideToTab1(payload, side) {
+    const m = (side === 'A' ? payload.meta?.A : payload.meta?.B);
+    if (!m) { alert(`Selected file is missing System ${side}.`); return; }
+    if (m.shape && m.shape !== 'finite-square') {
+      alert(`System ${side} uses the ${m.shape} shape, which Tab 1's finite-square well can't represent.`);
+      return;
+    }
+    const eStarOfSide = (typeof m.e_star_ev === 'number')
+      ? m.e_star_ev
+      : (E_STAR_REF_EV / (m.m_eff_me * m.length_nm * m.length_nm));
+    const v0Engine    = Math.round(m.v0_ev / eStarOfSide);
+    const v0Clamped   = Math.max(V0_MIN, Math.min(V0_MAX, v0Engine));
+    const eClamped    = Math.max(E_SLIDER_MIN, Math.min(eAxisMaxForV0(v0Clamped), Math.round(m.energy_ev / eStarOfSide)));
+    const gInt        = Math.max(GAMMA_INTERNAL_MIN, Math.min(GAMMA_INTERNAL_MAX, Math.round(m.gamma_ev / eStarOfSide) + 1));
+    const sigEngine   = Math.max(SIGMA_MIN, Math.min(SIGMA_MAX, Math.round(m.sigma_ev / eStarOfSide)));
+    setV0(v0Clamped);
+    setEnergy(eClamped);
+    setGammaInternal(gInt);
+    setSigma(sigEngine);
     handleStop();
     setPendingCrossImport(null);
   }
@@ -1396,68 +2129,103 @@ function Tab1Content({ activeTab, onChangeTab }) {
         </div>
       )}
 
-      {/* Cross-tab import — user picks which side of a tab 2 pair
-          file to pull into this single-system tab. */}
-      {pendingCrossImport && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
-          }}
-          onClick={() => setPendingCrossImport(null)}
-        >
+      {/* Cross-tab import — user picks which side of a tab 2 OR tab 3
+          pair file to pull into this single-system tab. For tab 3
+          files, sides with a non-square shape are disabled (Tab 1's
+          finite-square well can't represent parabolic or Coulomb). */}
+      {pendingCrossImport && (() => {
+        const isTab3 = pendingCrossImport.schema === 'finite-well-shape-comparison-export/v1';
+        const apply  = (side) => isTab3 ? applyTab3SideToTab1(pendingCrossImport, side) : applyTab2SideToTab1(pendingCrossImport, side);
+        const shapeA = pendingCrossImport.meta?.A?.shape || 'finite-square';
+        const shapeB = pendingCrossImport.meta?.B?.shape || 'finite-square';
+        const aOk = !isTab3 || shapeA === 'finite-square';
+        const bOk = !isTab3 || shapeB === 'finite-square';
+        const sideLabel = (side, shape, ok) => {
+          if (!isTab3 || ok) return `Import System ${side}`;
+          return `System ${side} (${shape} — unavailable)`;
+        };
+        return (
           <div
-            onClick={(e) => e.stopPropagation()}
             style={{
-              background: COL.panel, border: `1px solid ${COL.rule}`, borderRadius: 6,
-              padding: '20px 24px', maxWidth: 500,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-              fontFamily: FONTS.body,
+              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
             }}
+            onClick={() => setPendingCrossImport(null)}
           >
-            <div style={{ fontFamily: FONTS.display, fontSize: 22, fontStyle: 'italic', marginBottom: 10 }}>
-              Comparison file — pick one side
-            </div>
-            <div style={{ color: COL.inkDim, fontSize: 14, lineHeight: 1.5, marginBottom: 18 }}>
-              This file is a tab 2 dual-system snapshot. This tab simulates
-              a single system, so pick which side to import (the histograms
-              won't be transferred — only the parameters; you'll need to
-              re-run to accumulate measurements).
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => setPendingCrossImport(null)}
-                style={{
-                  padding: '8px 14px', background: 'transparent', color: COL.inkDim,
-                  border: `1px solid ${COL.rule}`, borderRadius: 4, cursor: 'pointer',
-                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3,
-                }}
-              >Cancel</button>
-              <button
-                onClick={() => applyTab2SideToTab1(pendingCrossImport, 'A')}
-                style={{
-                  padding: '8px 18px', background: COL.accent, color: '#0e1320',
-                  border: `1px solid ${COL.accent}`, borderRadius: 4, cursor: 'pointer',
-                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
-                }}
-              >Import System A</button>
-              <button
-                onClick={() => applyTab2SideToTab1(pendingCrossImport, 'B')}
-                style={{
-                  padding: '8px 18px', background: COL.accent, color: '#0e1320',
-                  border: `1px solid ${COL.accent}`, borderRadius: 4, cursor: 'pointer',
-                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
-                }}
-              >Import System B</button>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: COL.panel, border: `1px solid ${COL.rule}`, borderRadius: 6,
+                padding: '20px 24px', maxWidth: 520,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                fontFamily: FONTS.body,
+              }}
+            >
+              <div style={{ fontFamily: FONTS.display, fontSize: 22, fontStyle: 'italic', marginBottom: 10 }}>
+                {isTab3 ? 'Shape-comparison file — pick a finite-square side' : 'Comparison file — pick one side'}
+              </div>
+              <div style={{ color: COL.inkDim, fontSize: 14, lineHeight: 1.5, marginBottom: 18 }}>
+                {isTab3 ? (
+                  <>
+                    This file is a Tab 3 shape-comparison snapshot. Tab 1's finite-square well can
+                    represent a finite-square side directly; sides using the parabolic or Coulomb
+                    shape are unavailable for import here ({shapeA === 'finite-square' ? '' : `A is ${shapeA}`}
+                    {(shapeA !== 'finite-square' && shapeB !== 'finite-square') ? ', ' : ''}
+                    {shapeB === 'finite-square' ? '' : `B is ${shapeB}`}). Parameters only — re-run
+                    to accumulate measurements.
+                  </>
+                ) : (
+                  <>
+                    This file is a tab 2 dual-system snapshot. This tab simulates a single system, so
+                    pick which side to import (the histograms won't be transferred — only the
+                    parameters; you'll need to re-run to accumulate measurements).
+                  </>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setPendingCrossImport(null)}
+                  style={{
+                    padding: '8px 14px', background: 'transparent', color: COL.inkDim,
+                    border: `1px solid ${COL.rule}`, borderRadius: 4, cursor: 'pointer',
+                    fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3,
+                  }}
+                >Cancel</button>
+                <button
+                  disabled={!aOk}
+                  onClick={() => aOk && apply('A')}
+                  style={{
+                    padding: '8px 18px', background: aOk ? COL.accent : 'transparent',
+                    color: aOk ? '#0e1320' : COL.inkDim,
+                    border: `1px solid ${aOk ? COL.accent : COL.rule}`, borderRadius: 4,
+                    cursor: aOk ? 'pointer' : 'not-allowed', opacity: aOk ? 1 : 0.6,
+                    fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
+                  }}
+                >{sideLabel('A', shapeA, aOk)}</button>
+                <button
+                  disabled={!bOk}
+                  onClick={() => bOk && apply('B')}
+                  style={{
+                    padding: '8px 18px', background: bOk ? COL.accent : 'transparent',
+                    color: bOk ? '#0e1320' : COL.inkDim,
+                    border: `1px solid ${bOk ? COL.accent : COL.rule}`, borderRadius: 4,
+                    cursor: bOk ? 'pointer' : 'not-allowed', opacity: bOk ? 1 : 0.6,
+                    fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
+                  }}
+                >{sideLabel('B', shapeB, bOk)}</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <div style={{ maxWidth: 1120, margin: '0 auto' }}>
 
-        {/* ===== HEADER ===== */}
-        <header style={{ marginBottom: 12, display: 'flex', alignItems: 'flex-end', gap: 18, flexWrap: 'wrap' }}>
+        {/* ===== HEADER =====
+             Two-line subtitle, vertically centred against the italic
+             title, matches the convention shared by all three tabs:
+             "what knob" / "what comparison". */}
+        <header style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
           <h1 style={{
             fontFamily: FONTS.display, fontWeight: 400, fontSize: 38, margin: 0, padding: 0,
             lineHeight: 1, letterSpacing: -0.5, fontStyle: 'italic', whiteSpace: 'nowrap',
@@ -1466,151 +2234,36 @@ function Tab1Content({ activeTab, onChangeTab }) {
           </h1>
           <div style={{
             fontFamily: FONTS.mono, fontSize: 13, color: COL.inkDim, letterSpacing: 0.5,
-            lineHeight: 1.4, paddingBottom: 2,
+            lineHeight: 1.4,
           }}>
-            Classical and quantum electrons in a finite well
+            <div>Classical and quantum electrons</div>
+            <div>A single finite well</div>
           </div>
         </header>
 
         <TabBar activeTab={activeTab} onChange={onChangeTab} />
 
         {/* ===== TOP CONTROLS =====
-             Transport bar full width, then a parameters block + energy
-             slider side-by-side. Same layout as Tab 2 for visual parity. */}
-
-        {/* Transport + measurement count — full width. */}
-        <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={isIonised} colour={isIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
-                <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />
-
-                {/* Save dropdown — only enabled once there's data. */}
-                <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
-                  <TransportButton
-                    kind="save"
-                    active={saveMenuOpen}
-                    onClick={() => {
-                      if (count === 0 && qECount === 0) return;
-                      setSaveMenuOpen((o) => !o);
-                    }}
-                    colour={count > 0 || qECount > 0 ? COL.quantum : COL.inkDim}
-                    bg={COL.panel}
-                  />
-                  {saveMenuOpen && (
-                    <div
-                      style={{
-                        position: 'absolute', top: '110%', left: '50%',
-                        transform: 'translateX(-50%)',
-                        background: COL.panel, border: `1px solid ${COL.rule}`,
-                        borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-                        zIndex: 10, display: 'flex', flexDirection: 'column',
-                        minWidth: 96, overflow: 'hidden',
-                      }}
-                    >
-                      <button
-                        onClick={() => { exportCSV();  setSaveMenuOpen(false); }}
-                        style={{
-                          padding: '8px 14px', background: 'transparent', color: COL.ink,
-                          border: 'none', cursor: 'pointer',
-                          fontFamily: FONTS.mono, fontSize: 13,
-                          textAlign: 'left', letterSpacing: 0.3,
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = COL.rule; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >CSV</button>
-                      <button
-                        onClick={() => { exportJSON(); setSaveMenuOpen(false); }}
-                        style={{
-                          padding: '8px 14px', background: 'transparent', color: COL.ink,
-                          border: 'none', cursor: 'pointer',
-                          fontFamily: FONTS.mono, fontSize: 13,
-                          textAlign: 'left', letterSpacing: 0.3,
-                          borderTop: `1px solid ${COL.rule}`,
-                        }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = COL.rule; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                      >JSON</button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Load triggers a hidden file picker. */}
-                <TransportButton
-                  kind="load"
-                  active={false}
-                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                  colour={COL.quantum}
-                  bg={COL.panel}
-                />
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  style={{ display: 'none' }}
-                  onChange={(e) => {
-                    const f = e.target.files && e.target.files[0];
-                    handleFileChosen(f);
-                    e.target.value = '';
-                  }}
-                />
-
-                {/* Settings — gear icon, opens a modal. */}
-                <TransportButton
-                  kind="settings"
-                  active={settingsOpen}
-                  onClick={() => setSettingsOpen((o) => !o)}
-                  colour={COL.inkDim}
-                  bg={COL.panel}
-                />
-              </div>
-              {/* Stacked display toggles — two 22-px rows fit the 46-px
-                  transport button height. Same layout as tab 2 for
-                  visual parity. */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                <CheckboxRow
-                  checked={showTheory}
-                  onChange={() => setShowTheory((b) => !b)}
-                  label="Show theory"
-                  accent={COL.quantum}
-                  inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
-                />
-                <CheckboxRow
-                  checked={showEigen}
-                  onChange={() => setShowEigen((b) => !b)}
-                  label="Show eigenstates"
-                  accent={COL.quantum}
-                  inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
-                />
-              </div>
-              <div style={{ marginLeft: 'auto', textAlign: 'right', fontFamily: FONTS.mono, lineHeight: 1.1 }}>
-                <div style={{ fontSize: 22, color: COL.ink, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
-                  {count.toLocaleString()}
-                </div>
-                <div style={{ fontSize: 11, color: COL.inkDim, letterSpacing: 1, textTransform: 'uppercase', marginTop: 3 }}>
-                  measurements
-                </div>
-              </div>
-        </div>{/* end transport panel */}
+             Parameters block sits at the top (the user's "what am I
+             setting" surface), then the transport bar (the user's
+             "control the run" surface), then the simulation panels
+             below. Putting transport BELOW the parameter block keeps
+             Play/Pause within easy reach when scrolled down to watch
+             the simulation — the controls stay near the sim panels
+             on screens that show both. */}
 
         {/* Parameters block (left) + energy slider (right), side-by-side
             at equal heights so the V₀ / Γ / σ rows spread to match the
             slider's vertical extent. Mirrors each Tab 2 system panel. */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, marginBottom: 14, alignItems: 'stretch' }}>
           <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', flexDirection: 'column' }}>
-            {/* Editable controls grouped at the top, tightly stacked. */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <V0Slider
-                label="Well depth V₀"
-                tooltip="Depth of the finite well (units of ħ²/(2mL²)). Deeper wells contain more bound states; the slider energy and energy axis adapt."
-                value={V0}
-                onChange={(v) => setV0(Math.round(v))}
-                min={V0_MIN}
-                max={V0_MAX}
-                step={5}
-                accent={COL.ionised}
-                rule={COL.rule} ink={COL.ink} inkDim={COL.inkDim} mono={FONTS.mono}
-                decimals={0}
-              />
+            {/* Editable controls grouped at the top, tightly stacked.
+                V₀ used to live here as a horizontal slider; it's now
+                paired with Energy as a vertical slider in the right
+                column, so the V₀-and-E relationship reads geometrically
+                (knob position on V₀ slider == V₀ marker position on
+                Energy slider). */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <PreferenceNumberRow
                 label="Γ (preparation width)"
                 value={gammaInternal}
@@ -1620,6 +2273,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 accent={COL.quantum}
                 ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
                 displayOffset={-1}
+                title="Γ — the FWHM of the Lorentzian that weights eigenstates around the slider energy E_set when preparing the superposition. Γ = 0 picks the single nearest eigenstate (a pure state); larger Γ mixes neighbouring states (broadband prep). Physically, a wider Γ corresponds to a shorter-lifetime / less-monochromatic source."
               />
               <PreferenceNumberRow
                 label="σ (instrument resolution)"
@@ -1629,6 +2283,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 max={SIGMA_MAX}
                 accent={COL.accent}
                 ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
+                title="σ — Gaussian noise added to each energy measurement, in the same units as E. Models a real instrument's finite resolution: σ = 0 reads E_n exactly; larger σ broadens each histogram peak. Independent of Γ — Γ shapes the prep, σ shapes the readout."
               />
             </div>
 
@@ -1730,14 +2385,40 @@ function Tab1Content({ activeTab, onChangeTab }) {
             </div>
           </div>
 
-          {/* Energy slider (vertical, matched to Tab 2). */}
-          <div style={{ ...panelStyle(), padding: '8px 14px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {/* Paired V₀ + Energy vertical sliders. Both share the same
+              y-axis [0, V0_MAX] so the V₀ knob's vertical position
+              coincides geometrically with the V₀ threshold marker on
+              the Energy slider. Drag V₀ down → the marker drops on the
+              Energy slider and the "ionised" region (above marker)
+              shows up faintly behind the upper part of the track.
+              Tab 1 is the teaching version: clear labels above each
+              track, comfortable spacing. */}
+          <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 14 }}>
             <VerticalSlider
-              label="Energy"
+              label="DEPTH"
+              value={V0}
+              onChange={(v) => setV0(Math.max(V0_MIN, Math.min(V0_MAX, Math.round(v))))}
+              min={0}
+              max={V0_MAX}
+              accent={COL.ionised}
+              ionisedAccent={COL.ionised}
+              rule={COL.rule}
+              inkDim={COL.inkDim}
+              ink={COL.ink}
+              mono={FONTS.mono}
+              v0={null}
+              decimals={0}
+              ticks={null}
+              trackHeight={170}
+              v0LabelSide="left"
+              title="V₀ — depth of the finite square well. Sets the ceiling above which a particle is unbound. Number of bound states grows with depth; deeper wells localise the wavefunction more tightly and reduce leakage past the walls."
+            />
+            <VerticalSlider
+              label="ENERGY"
               value={energy}
               onChange={setEnergy}
-              min={E_SLIDER_MIN}
-              max={eSliderMax}
+              min={0}
+              max={V0_MAX}
               accent={COL.accent}
               ionisedAccent={COL.ionised}
               rule={COL.rule}
@@ -1749,75 +2430,244 @@ function Tab1Content({ activeTab, onChangeTab }) {
               ticks={showEigen ? states.map((s) => s.E) : null}
               onTickClick={showEigen ? (E) => setEnergy(Math.round(E)) : null}
               tickAccent={COL.quantum}
-              trackHeight={140}
+              trackHeight={170}
               v0LabelSide="right"
+              title="E_set — the energy you're preparing the system at. Combined with Γ this picks a Lorentzian-weighted superposition of eigenstates (or the nearest eigenstate when Γ = 0). Drag past V₀ to prepare an ionised state. When Show eigenstates is on, the ticks let you snap directly to an exact E_n."
             />
           </div>
         </div>
 
+        {/* Transport + measurement count — full width. Placed BELOW the
+            parameter block so the controls sit immediately above the
+            simulation panels: when the user scrolls down to watch the
+            run, Play/Pause/Stop stay within reach. */}
+        <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={isIonised} colour={isIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
+                <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />
+
+                {/* Save dropdown — only enabled once there's data. */}
+                <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+                  <TransportButton
+                    kind="save"
+                    active={saveMenuOpen}
+                    onClick={() => {
+                      if (count === 0 && qECount === 0) return;
+                      setSaveMenuOpen((o) => !o);
+                    }}
+                    colour={count > 0 || qECount > 0 ? COL.quantum : COL.inkDim}
+                    bg={COL.panel}
+                  />
+                  {saveMenuOpen && (
+                    <div
+                      style={{
+                        position: 'absolute', top: '110%', left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: COL.panel, border: `1px solid ${COL.rule}`,
+                        borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                        zIndex: 10, display: 'flex', flexDirection: 'column',
+                        minWidth: 96, overflow: 'hidden',
+                      }}
+                    >
+                      <button
+                        onClick={() => { exportCSV();  setSaveMenuOpen(false); }}
+                        style={{
+                          padding: '8px 14px', background: 'transparent', color: COL.ink,
+                          border: 'none', cursor: 'pointer',
+                          fontFamily: FONTS.mono, fontSize: 13,
+                          textAlign: 'left', letterSpacing: 0.3,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = COL.rule; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >CSV</button>
+                      <button
+                        onClick={() => { exportJSON(); setSaveMenuOpen(false); }}
+                        style={{
+                          padding: '8px 14px', background: 'transparent', color: COL.ink,
+                          border: 'none', cursor: 'pointer',
+                          fontFamily: FONTS.mono, fontSize: 13,
+                          textAlign: 'left', letterSpacing: 0.3,
+                          borderTop: `1px solid ${COL.rule}`,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = COL.rule; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                      >JSON</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Load triggers a hidden file picker. */}
+                <TransportButton
+                  kind="load"
+                  active={false}
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  colour={COL.quantum}
+                  bg={COL.panel}
+                />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json,application/json"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const f = e.target.files && e.target.files[0];
+                    handleFileChosen(f);
+                    e.target.value = '';
+                  }}
+                />
+
+                {/* Settings — gear icon, opens a modal. */}
+                <TransportButton
+                  kind="settings"
+                  active={settingsOpen}
+                  onClick={() => setSettingsOpen((o) => !o)}
+                  colour={COL.inkDim}
+                  bg={COL.panel}
+                />
+              </div>
+              {/* Stacked display toggles — two 22-px rows fit the 46-px
+                  transport button height. Same layout as tab 2 for
+                  visual parity. */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <CheckboxRow
+                  checked={showTheory}
+                  onChange={() => setShowTheory((b) => !b)}
+                  label="Show theory"
+                  accent={COL.quantum}
+                  inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+                  title="Overlay analytical predictions: Σ |c_n|² Gaussian peaks (bound) and a Lorentzian tail (continuum), broadened by the instrument resolution σ."
+                />
+                <CheckboxRow
+                  checked={showEigen}
+                  onChange={() => setShowEigen((b) => !b)}
+                  label="Show eigenstates"
+                  accent={COL.quantum}
+                  inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+                  title="Mark each bound state E_n on the energy histogram, on the sim panel as dashed lines, and on the Energy slider as tick marks. Also adds the |c_n|² column to the bound-states table."
+                />
+              </div>
+              <div style={{ marginLeft: 'auto', textAlign: 'right', fontFamily: FONTS.mono, lineHeight: 1.1 }}>
+                <div style={{ fontSize: 22, color: COL.ink, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                  {count.toLocaleString()}
+                </div>
+                <div style={{ fontSize: 11, color: COL.inkDim, letterSpacing: 1, textTransform: 'uppercase', marginTop: 3 }}>
+                  measurements
+                </div>
+              </div>
+        </div>{/* end transport panel */}
+
         {/* ===== MAIN GRID — Classical | Quantum ===== */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
-          {/* CLASSICAL */}
+          {/* CLASSICAL — same scatter-with-marginals layout as QUANTUM.
+              Particle bounces in the well (left); P(E) vertical to the
+              right shares the y-axis; P(x) below shares the x-axis;
+              summary panel bottom-right. */}
           <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <PanelHeader tag="Classical" color={COL.classical} />
+            <PanelHeader tag="Classical" color={COL.classical}
+              title="Classical particle: bounces in the well, can't tunnel past V₀, escapes only when its energy exceeds V₀. Reference contrast for the quantum side." />
 
-            <ParticleView
-              x={xRef.current}
-              energy={energy}
-              V0={V0}
-              isIonised={isIonised}
-              bouncePhase={bouncePhaseRef.current}
-              bouncePeakFrac={bouncePeakFracRef.current}
-              recentMeasurements={recentXRef.current}
-              col={COL.classical}
-              wall={COL.ink}
-              bg={COL.panel}
-              ionisedCol={COL.ionised}
-              mono={FONTS.mono}
-            />
-
-            <PositionHistogram
-              hist={xHistDensity}
-              recentMarkers={recentXRef.current}
-              col={COL.classical}
-              ink={COL.ink}
-              inkDim={COL.inkDim}
-              rule={COL.rule}
-              mono={FONTS.mono}
-              meanX={xMean}
-              isIonised={isIonised}
-              ionisedCol={COL.ionised}
-              leakFrac={0}
-              overlay={showTheory ? cPosTheoryDensity : null}
-            />
-
-            <EnergyHistogram
-              hist={eHistDensity}
-              recentMarkers={recentERef.current}
-              col={COL.classical}
-              ink={COL.ink}
-              inkDim={COL.inkDim}
-              rule={COL.rule}
-              mono={FONTS.mono}
-              eSet={energy}
-              meanE={eMean}
-              v0={V0}
-              eHistMax={eHistMax}
-              ionisedCol={COL.ionised}
-              accent={COL.accent}
-              ionisedFrac={0}
-              eigenStates={showEigen ? states : null}
-              theoryCurve={showTheory ? cEnergyTheoryDensity : null}
-              logY={logEnergy}
-              onToggleLogY={() => setLogEnergy((b) => !b)}
-            />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+              <ParticleView
+                x={xRef.current}
+                energy={energy}
+                V0={V0}
+                isIonised={isIonised}
+                bouncePhase={bouncePhaseRef.current}
+                bouncePeakFrac={bouncePeakFracRef.current}
+                recentMeasurements={recentXRef.current}
+                col={COL.classical}
+                wall={COL.ink}
+                bg={COL.panel}
+                ionisedCol={COL.ionised}
+                mono={FONTS.mono}
+                eHistMax={eHistMax}
+              />
+              <VerticalEnergyHistogram
+                hist={eHistDensity}
+                recentMarkers={recentERef.current}
+                col={COL.classical}
+                ink={COL.ink}
+                inkDim={COL.inkDim}
+                rule={COL.rule}
+                mono={FONTS.mono}
+                eSet={energy}
+                meanE={eMean}
+                v0={V0}
+                eHistMax={eHistMax}
+                ionisedCol={COL.ionised}
+                accent={COL.accent}
+                ionisedFrac={0}
+                eigenStates={null}                 /* classical panel never shows quantum eigenstate ticks */
+                theoryCurve={showTheory ? cEnergyTheoryDensity : null}
+                logY={logEnergy}
+                onToggleLogY={() => setLogEnergy((b) => !b)}
+              />
+              <PositionHistogram
+                hist={xHistDensity}
+                recentMarkers={recentXRef.current}
+                col={COL.classical}
+                ink={COL.ink}
+                inkDim={COL.inkDim}
+                rule={COL.rule}
+                mono={FONTS.mono}
+                meanX={xMean}
+                isIonised={isIonised}
+                ionisedCol={COL.ionised}
+                leakFrac={0}
+                overlay={showTheory ? cPosTheoryDensity : null}
+                showStats={false}
+                centredX={true}
+              />
+              {/* Summary block — bottom-right cell of the 2 × 2 grid.
+                  Two-column inline grid: right-aligned labels, left-
+                  aligned values. Row order is fixed across CLASSICAL
+                  and QUANTUM panels (bound, ⟨x⟩, ⟨E⟩, P_out, P_ion) so
+                  the same parameter is on the same line on both sides;
+                  classical leaves the "bound" row blank because no
+                  quantum spectrum applies to it. The block is centered
+                  horizontally below EH via justifyContent. */}
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                padding: '4px 0 4px 0',
+              }}>
+                <div style={{
+                  fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
+                  lineHeight: 1.45,
+                  display: 'grid',
+                  gridTemplateColumns: 'auto auto',
+                  columnGap: 6, rowGap: 2,
+                }}>
+                  {/* bound — quantum only; classical leaves the row blank
+                      so the rest of the table lines up across panels. */}
+                  <div style={{ textAlign: 'right', visibility: 'hidden' }}>bound:</div>
+                  <div style={{ textAlign: 'left',  visibility: 'hidden' }}>0</div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured position. For a uniform classical particle ⟨x⟩ → 0 in centred coordinates (well centre).">⟨x⟩:</div>
+                  <div style={{ textAlign: 'left',  color: COL.classical, fontVariantNumeric: 'tabular-nums' }}>
+                    {xMean !== null ? `${(xMean - 0.5).toFixed(2)}L` : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured energy. For a classical particle at fixed E_set this just sits at E_set.">⟨E⟩:</div>
+                  <div style={{ textAlign: 'left',  color: COL.classical, fontVariantNumeric: 'tabular-nums' }}>
+                    {eMean !== null ? eMean.toFixed(1) : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Fraction of position measurements that fell outside the well — the classically forbidden region. Always 0 for a classical particle by construction; the contrast with the quantum side is the chemistry punchline.">
+                    P<span style={{ fontSize: 9 }}>out</span>:
+                  </div>
+                  <div style={{ textAlign: 'left',  color: COL.classical, fontVariantNumeric: 'tabular-nums' }}>0%</div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Fraction of energy measurements above V₀ (ionised events). Classical particles can't tunnel out, so this is 0 unless the prep energy itself is above V₀.">
+                    P<span style={{ fontSize: 9 }}>ion</span>:
+                  </div>
+                  <div style={{ textAlign: 'left',  color: COL.inkDim, fontVariantNumeric: 'tabular-nums' }}>0%</div>
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* QUANTUM */}
           <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <PanelHeader tag="Quantum" color={COL.quantum} />
+              <PanelHeader tag="Quantum" color={COL.quantum}
+                title="Quantum particle: bound in a Lorentzian-weighted superposition of eigenstates around E_set. ψ has exponentially decaying tails past the walls (the leakage that classical particles can't do)." />
               <SegmentedToggle
                 value={psiMode}
                 onChange={setPsiMode}
@@ -1833,56 +2683,111 @@ function Tab1Content({ activeTab, onChangeTab }) {
               />
             </div>
 
-            <WavefunctionView
-              states={states}
-              probs={probs}
-              t={tRef.current}
-              isIonised={isIonised}
-              psiMode={psiMode}
-              latestX={qXLatestRef.current}
-              recentMeasurements={qRecentXRef.current}
-              col={COL.quantum}
-              wall={COL.ink}
-              bg={COL.panel}
-              ionisedCol={COL.ionised}
-              mono={FONTS.mono}
-            />
-
-            <PositionHistogram
-              hist={qXHistDensity}
-              recentMarkers={qRecentXRef.current}
-              col={COL.quantum}
-              ink={COL.ink}
-              inkDim={COL.inkDim}
-              rule={COL.rule}
-              mono={FONTS.mono}
-              meanX={qxMean}
-              isIonised={isIonised}
-              ionisedCol={COL.ionised}
-              leakFrac={qLeakFrac}
-              overlay={showTheory ? qPosTheoryDensity : null}
-            />
-
-            <EnergyHistogram
-              hist={qEHistDensity}
-              recentMarkers={qRecentERef.current}
-              col={COL.quantum}
-              ink={COL.ink}
-              inkDim={COL.inkDim}
-              rule={COL.rule}
-              mono={FONTS.mono}
-              eSet={energy}
-              meanE={qeMean}
-              v0={V0}
-              eHistMax={eHistMax}
-              ionisedCol={COL.ionised}
-              accent={COL.accent}
-              ionisedFrac={qIonisedFrac}
-              eigenStates={showEigen ? states : null}
-              theoryCurve={showTheory ? qEnergyTheoryDensity : null}
-              logY={logEnergy}
-              onToggleLogY={() => setLogEnergy((b) => !b)}
-            />
+            {/* Scatter-with-marginals 2 × 2 layout. Sim and P(E) share
+                the y-axis (E from floor to eHistMax, V₀ line at the
+                same horizontal level on both). Sim and P(x) share the
+                x-axis (engine x in [-0.3, 1.3], walls at the same px).
+                The bottom-right cell is open space for consolidated
+                readouts — currently the eigenstates summary when Show
+                eigenstates is on, otherwise empty. */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+              {/* Top row: sim (left) + P(E) vertical (right). */}
+              <WavefunctionView
+                states={states}
+                probs={probs}
+                t={tRef.current}
+                isIonised={isIonised}
+                psiMode={psiMode}
+                latestX={qXLatestRef.current}
+                recentMeasurements={qRecentXRef.current}
+                col={COL.quantum}
+                wall={COL.ink}
+                bg={COL.panel}
+                ionisedCol={COL.ionised}
+                mono={FONTS.mono}
+                v0={V0}
+                eHistMax={eHistMax}
+                eSet={energy}
+                showEigenStates={showEigen ? states : null}
+              />
+              <VerticalEnergyHistogram
+                hist={qEHistDensity}
+                recentMarkers={qRecentERef.current}
+                col={COL.quantum}
+                ink={COL.ink}
+                inkDim={COL.inkDim}
+                rule={COL.rule}
+                mono={FONTS.mono}
+                eSet={energy}
+                meanE={qeMean}
+                v0={V0}
+                eHistMax={eHistMax}
+                ionisedCol={COL.ionised}
+                accent={COL.accent}
+                ionisedFrac={qIonisedFrac}
+                eigenStates={showEigen ? states : null}
+                theoryCurve={showTheory ? qEnergyTheoryDensity : null}
+                logY={logEnergy}
+                onToggleLogY={() => setLogEnergy((b) => !b)}
+              />
+              {/* Bottom row: P(x) horizontal (left) + info panel (right). */}
+              <PositionHistogram
+                hist={qXHistDensity}
+                recentMarkers={qRecentXRef.current}
+                col={COL.quantum}
+                ink={COL.ink}
+                inkDim={COL.inkDim}
+                rule={COL.rule}
+                mono={FONTS.mono}
+                meanX={qxMean}
+                isIonised={isIonised}
+                ionisedCol={COL.ionised}
+                leakFrac={qLeakFrac}
+                overlay={showTheory ? qPosTheoryDensity : null}
+                showStats={false}
+                centredX={true}
+              />
+              {/* Summary block — two-column table, centered below EH.
+                  Row order matches the CLASSICAL panel so each parameter
+                  sits on the same line on both sides. */}
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+                padding: '4px 0 4px 0',
+              }}>
+                <div style={{
+                  fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
+                  lineHeight: 1.45,
+                  display: 'grid',
+                  gridTemplateColumns: 'auto auto',
+                  columnGap: 6, rowGap: 2,
+                }}>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Number of bound states the well supports at the current V₀ (and m*, L on Tabs 2/3). Deeper wells host more bound states.">bound:</div>
+                  <div style={{ textAlign: 'left',  color: COL.ink, fontVariantNumeric: 'tabular-nums' }}>{states.length}</div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured position. Symmetric superpositions give ⟨x⟩ ≈ 0 (well centre); asymmetric prep can shift it.">⟨x⟩:</div>
+                  <div style={{ textAlign: 'left',  color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                    {qxMean !== null ? `${(qxMean - 0.5).toFixed(2)}L` : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured energy. Should converge to Σ |c_n|² E_n + (continuum tail), which is close to but not exactly E_set when Γ > 0 because the Lorentzian weights neighbouring states asymmetrically.">⟨E⟩:</div>
+                  <div style={{ textAlign: 'left',  color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                    {qeMean !== null ? qeMean.toFixed(1) : '—'}
+                  </div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Fraction of position measurements that fell outside the well — i.e. in the classically forbidden region. Nonzero on the quantum side because the wavefunction has exponentially decaying tails past the walls (the precondition for tunnelling).">
+                    P<span style={{ fontSize: 9 }}>out</span>:
+                  </div>
+                  <div style={{ textAlign: 'left',  color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                    {(qLeakFrac * 100).toFixed(qLeakFrac >= 0.01 ? 0 : 1)}%
+                  </div>
+                  <div style={{ textAlign: 'right', cursor: 'help' }} title="Fraction of energy measurements above V₀ (ionised events). Nonzero whenever the prep Lorentzian's tail extends past V₀ — i.e. when Γ is large or E_set is close to V₀.">
+                    P<span style={{ fontSize: 9 }}>ion</span>:
+                  </div>
+                  <div style={{ textAlign: 'left',
+                                color: qIonisedFrac > 0.01 ? COL.ionised : COL.inkDim,
+                                fontVariantNumeric: 'tabular-nums' }}>
+                    {(qIonisedFrac * 100).toFixed(qIonisedFrac >= 0.01 ? 0 : 1)}%
+                  </div>
+                </div>
+              </div>
+            </div>
           </section>
         </div>
 
@@ -1936,12 +2841,15 @@ function Tab1Content({ activeTab, onChangeTab }) {
 // =============================================================
 
 // ---------- Panel header (small caps tag, optional title) ----------
-function PanelHeader({ tag, color }) {
+function PanelHeader({ tag, color, title }) {
   return (
-    <div style={{
-      fontFamily: FONTS.mono, fontSize: 14, letterSpacing: 2,
-      color, textTransform: 'uppercase', fontWeight: 600,
-    }}>
+    <div
+      title={title}
+      style={{
+        fontFamily: FONTS.mono, fontSize: 14, letterSpacing: 2,
+        color, textTransform: 'uppercase', fontWeight: 600,
+        ...(title ? { cursor: 'help' } : {}),
+      }}>
       {tag}
     </div>
   );
@@ -2052,13 +2960,16 @@ function TransportButton({ kind, active, onClick, colour, bg, disabled = false }
 
 // ---------- Checkbox row (full-width, used in the preferences panel) ----------
 // Mirrors PQV's CheckboxRow: label on the left, checkmark cell on the right.
-function CheckboxRow({ checked, onChange, label, accent, inkDim, rule, ink, mono }) {
+function CheckboxRow({ checked, onChange, label, accent, inkDim, rule, ink, mono, title }) {
   // onClick on the outer label so clicking the text toggles the box
   // too. Onclick is only on one element (no inner handler on the box
   // span) to avoid double-firing via event bubbling.
+  // The optional `title` becomes a browser tooltip on hover, giving
+  // the user the longer explanation without crowding the label text.
   return (
     <label
       onClick={onChange}
+      title={title}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         gap: 14,
@@ -2093,7 +3004,7 @@ function CheckboxRow({ checked, onChange, label, accent, inkDim, rule, ink, mono
 // horizontal slider is overkill. `displayOffset` lets us store an
 // internal value with a different offset to the display (Γ stores +1
 // internally to avoid the Lorentzian singularity at exact eigenvalues).
-function PreferenceNumberRow({ label, value, onChange, min, max, accent, ink, inkDim, rule, mono, displayOffset = 0 }) {
+function PreferenceNumberRow({ label, value, onChange, min, max, accent, ink, inkDim, rule, mono, displayOffset = 0, title }) {
   const displayed = value + displayOffset;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(String(displayed));
@@ -2108,7 +3019,17 @@ function PreferenceNumberRow({ label, value, onChange, min, max, accent, ink, in
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       userSelect: 'none', fontFamily: mono, fontSize: 14, color: ink, height: 22,
     }}>
-      <span style={{ color: ink, letterSpacing: 0.3 }}>{label}</span>
+      {/* Title on the label only (not the steppers) so hovering over
+          the parameter name pops the description, but +/− buttons get
+          their own clean affordance feedback. The `cursor: help` arrow
+          on hover is the only visual cue that a tooltip exists. */}
+      <span
+        title={title}
+        style={{
+          color: ink, letterSpacing: 0.3,
+          ...(title ? { cursor: 'help' } : {}),
+        }}
+      >{label}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <button
           onClick={() => onChange(Math.max(min, value - 1))}
@@ -2329,20 +3250,76 @@ function Stepper({
 // Small chain-link icon. Linked = accent color, two pills overlapping.
 // Unlinked = inkDim, two pills with a gap. Click to toggle; the parent
 // owns the boolean state and the sync-on-link logic.
-function LinkToggle({ linked, onToggle, accent, inkDim }) {
+// ---------- Tab 3 shape picker ----------
+// Three-way segmented control between finite-square, truncated-parabolic
+// and softened-Coulomb. Coloured in the settings-purple accent because
+// it's the "knob that shapes the simulation" — the same visual register
+// as the V₀ slider (which sets the well depth) and the Settings cog. A
+// matching LinkToggle ties the two sides together; the locked decision
+// defaults this to ON so the first-run experience is two identical
+// finite squares and the student's first experiment is unlocking the
+// shape and picking a different one on one side.
+function ShapePicker({ value, onChange, linked, onToggleLinked, accent, inkDim, rule, mono }) {
+  // Abbreviated labels keep the control compact; the longer names live
+  // in tooltips so a student who's never seen "softened Coulomb" can
+  // still find the formula in the tooltip text.
+  const SHAPE_OPTIONS = [
+    { value: 'finite-square',       label: 'Square',    tooltip: 'Finite square — vertical walls. Same shape as Tabs 1 & 2.' },
+    { value: 'truncated-parabolic', label: 'Parabolic', tooltip: 'Truncated parabolic — V(x) = min(½ m ω² x², V₀). Harmonic ladder ℏω(n + ½) in the deep limit.' },
+    { value: 'softened-coulomb',    label: 'Coulomb',   tooltip: 'Softened Coulomb — V(x) = V₀ (1 − 1/√(12 x²/L² + 1)). Atomic-style converging ladder.' },
+  ];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{
+        display: 'inline-flex', border: `1px solid ${rule}`, borderRadius: 3,
+        overflow: 'hidden', fontFamily: mono, fontSize: 11,
+      }}>
+        {SHAPE_OPTIONS.map((opt) => {
+          const active = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => onChange(opt.value)}
+              title={opt.tooltip}
+              style={{
+                padding: '4px 10px',
+                background: active ? accent : 'transparent',
+                color: active ? COL.bg : inkDim,
+                border: 'none',
+                cursor: 'pointer',
+                fontFamily: mono,
+                fontSize: 11,
+                fontWeight: active ? 600 : 500,
+                letterSpacing: 0.3,
+                transition: 'background 0.15s, color 0.15s',
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+      <LinkToggle linked={linked} onToggle={onToggleLinked} accent={accent} inkDim={inkDim} />
+    </div>
+  );
+}
+
+function LinkToggle({ linked, onToggle, accent, inkDim, compact = false }) {
   const col = linked ? accent : inkDim;
+  const buttonSize = compact ? 16 : 24;
+  const iconSize   = compact ? 13 : 18;
   return (
     <button
       onClick={onToggle}
       title={linked ? 'Linked across A & B — click to unlink' : 'Independent — click to link'}
       style={{
-        width: 24, height: 24, padding: 0,
+        width: buttonSize, height: buttonSize, padding: 0,
         background: 'transparent', border: 'none', cursor: 'pointer',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         flexShrink: 0, opacity: linked ? 1 : 0.65,
       }}
     >
-      <svg width={18} height={18} viewBox="0 0 24 24" stroke={col} strokeWidth={1.8} fill="none" strokeLinecap="round">
+      <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" stroke={col} strokeWidth={1.8} fill="none" strokeLinecap="round">
         {linked ? (
           <g>
             <rect x={2}  y={9} width={12} height={6} rx={3} />
@@ -2364,13 +3341,21 @@ function LinkToggle({ linked, onToggle, accent, inkDim }) {
 //   - the segment of the track above V0 is drawn in the ionised colour,
 //     so the user sees the threshold without needing a tooltip;
 //   - the value label and knob both adopt the ionised colour above V0.
-function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccent, rule, inkDim, ink, mono, v0, decimals = 0, ticks, onTickClick, tickAccent, trackHeight = 200, activeTickTolerance = 0.5, valueAddon = null, v0LabelSide = 'left' }) {
+function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccent, rule, inkDim, ink, mono, v0, decimals = 0, ticks, onTickClick, tickAccent, trackHeight = 200, activeTickTolerance = 0.5, valueAddon = null, v0LabelSide = 'left', width = 88, compactValue = false, title, compactNLabels = false }) {
   const TRACK_H = trackHeight;
   const TRACK_W = 8;
   const PAD_TOP = 10;
   const PAD_BOTTOM = 10;
   const innerH = TRACK_H;
-  const trackX = 28;
+  // Tab 3's compact V₀ slider needs the track shifted left to leave
+  // room for the value display + link toggle below; default 28 leaves
+  // ~60 px on the right for eigenstate "n=X" labels.
+  const trackX = width < 60 ? 18 : 28;
+  // V₀ marker visibility: skip the dashed line + "V₀" label when the
+  // caller passes v0=null (typical on a V₀ slider, where the whole
+  // track *is* V₀ and a redundant "V₀" tick at the knob position would
+  // mislead the eye).
+  const showV0Marker = v0 !== null && v0 !== undefined && Number.isFinite(v0);
 
   function yFor(v) {
     const clamped = Math.max(min, Math.min(max, v));
@@ -2378,8 +3363,11 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
   }
 
   const knobY = yFor(value);
-  const v0Y   = yFor(v0);
-  const isAbove = value > v0;
+  // v0Y is only consulted when showV0Marker is true. Default to top of
+  // track so the "upper track (above V0)" rect collapses to zero width
+  // and the marker rendering is no-op when suppressed.
+  const v0Y   = showV0Marker ? yFor(v0) : PAD_TOP;
+  const isAbove = showV0Marker && value > v0;
   const knobAccent = isAbove ? ionisedAccent : accent;
 
   const trackRef = useRef(null);
@@ -2413,17 +3401,29 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
     setEditing(false);
   }
 
+  // The track lives at SVG x = trackX, not at the SVG centre, because
+  // the SVG reserves space on one side for eigenstate "n=k" labels.
+  // The label-above and value-below are visually paired with the
+  // track, so we shift them by (trackX − width/2) to centre them on
+  // the track instead of on the SVG. With trackX = 28 and width = 88
+  // this is a −16 px shift; with the compact V₀ slider (trackX = 18,
+  // width = 42) it's a −3 px shift.
+  const trackOffset = trackX - width / 2;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', userSelect: 'none' }}>
-      <div style={{
-        fontFamily: mono, fontSize: 13, color: inkDim, letterSpacing: 1,
-        textTransform: 'uppercase', marginBottom: 4, fontWeight: 500,
-      }}>
+      <div
+        title={title}
+        style={{
+          fontFamily: mono, fontSize: 13, color: inkDim, letterSpacing: 1,
+          textTransform: 'uppercase', marginBottom: 4, fontWeight: 500,
+          transform: `translateX(${trackOffset}px)`,
+          ...(title ? { cursor: 'help' } : {}),
+        }}>
         {label}
       </div>
       <svg
         ref={trackRef}
-        width={88}
+        width={width}
         height={PAD_TOP + innerH + PAD_BOTTOM}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -2431,10 +3431,18 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
         onPointerCancel={onPointerUp}
         style={{ cursor: 'pointer', touchAction: 'none' }}
       >
-        {/* base track (below V0 — bound region) */}
-        <rect x={trackX - TRACK_W / 2} y={v0Y} width={TRACK_W} height={(PAD_TOP + innerH) - v0Y} fill={rule} rx={4} />
-        {/* upper track (above V0 — continuum region, drawn faintly in the ionised colour) */}
-        <rect x={trackX - TRACK_W / 2} y={PAD_TOP} width={TRACK_W} height={v0Y - PAD_TOP} fill={ionisedAccent} opacity={0.18} rx={4} />
+        {/* Base + above-V₀ split track. When the V₀ marker is hidden
+            (v0=null), draw the whole track as one solid `rule` rect —
+            there's no "above V₀" / "below V₀" distinction on a slider
+            that *is* V₀. */}
+        {showV0Marker ? (
+          <g>
+            <rect x={trackX - TRACK_W / 2} y={v0Y} width={TRACK_W} height={(PAD_TOP + innerH) - v0Y} fill={rule} rx={4} />
+            <rect x={trackX - TRACK_W / 2} y={PAD_TOP} width={TRACK_W} height={v0Y - PAD_TOP} fill={ionisedAccent} opacity={0.18} rx={4} />
+          </g>
+        ) : (
+          <rect x={trackX - TRACK_W / 2} y={PAD_TOP} width={TRACK_W} height={innerH} fill={rule} rx={4} />
+        )}
 
         {/* filled portion from min up to current value */}
         <rect x={trackX - TRACK_W / 2} y={knobY} width={TRACK_W}
@@ -2447,8 +3455,8 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
             could crowd a nearby n label on the right). When slider
             max = V₀ (tab 2), V₀ sits at the top with no eigenstates
             above it, and placing it on the right alongside the n
-            labels reads cleaner. */}
-        {v0LabelSide === 'right' ? (
+            labels reads cleaner. Suppressed entirely when v0=null. */}
+        {showV0Marker && (v0LabelSide === 'right' ? (
           <g>
             <line x1={trackX + TRACK_W / 2 + 2} x2={trackX + TRACK_W / 2 + 9}
                   y1={v0Y} y2={v0Y}
@@ -2468,7 +3476,7 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
               V₀
             </text>
           </g>
-        )}
+        ))}
 
         {/* Eigenstate ticks on the RIGHT of the track (matches the
             sibling app). Clickable hit-area extends rightward so the
@@ -2503,7 +3511,16 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
               <text x={trackX + TRACK_W / 2 + 12} y={tY + labelDy}
                     fill={tickCol} fontSize={isActive ? 13 : 12}
                     fontFamily={mono} letterSpacing={0.3} opacity={0.95}>
-                <tspan fontStyle="italic">n</tspan>={i + 1}
+                {compactNLabels ? (
+                  // Tab 2/3 narrow sliders: just the number — "n=" prefix
+                  // and italic n don't fit in the trimmed eigenstate-label
+                  // gutter, and were getting clipped to "n=".
+                  `${i + 1}`
+                ) : (
+                  // Tab 1 wider teaching slider has the room for the full
+                  // n=k notation, which reads better as eigenstate index.
+                  <><tspan fontStyle="italic">n</tspan>={i + 1}</>
+                )}
               </text>
             </g>
           );
@@ -2515,8 +3532,14 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
 
       {/* Editable numeric value + optional addon (e.g. a LinkToggle).
           Wrapping them in a flex row keeps the addon visually paired
-          with the value rather than dangling below the whole slider. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+          with the value rather than dangling below the whole slider.
+          compactValue trims the value width and the inter-element gap
+          for the slimmer Tab 2/3 paired-slider layout. */}
+      <div style={{
+        display: 'flex', alignItems: 'center',
+        gap: compactValue ? 1 : 4, marginTop: 4,
+        transform: `translateX(${trackOffset}px)`,
+      }}>
         {editing ? (
           <input
             autoFocus type="text" value={draft}
@@ -2528,9 +3551,9 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
               if (e.key === 'Escape') { setEditing(false); setDraft(value.toFixed(decimals)); }
             }}
             style={{
-              width: 52, textAlign: 'center', background: 'transparent', color: knobAccent,
-              border: `1px solid ${knobAccent}`, padding: '2px 4px',
-              fontFamily: mono, fontSize: 14, fontVariantNumeric: 'tabular-nums',
+              width: compactValue ? 36 : 52, textAlign: 'center', background: 'transparent', color: knobAccent,
+              border: `1px solid ${knobAccent}`, padding: compactValue ? '1px 2px' : '2px 4px',
+              fontFamily: mono, fontSize: compactValue ? 12 : 14, fontVariantNumeric: 'tabular-nums',
               borderRadius: 2, fontWeight: 600,
             }}
           />
@@ -2538,8 +3561,9 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
           <div
             onClick={() => setEditing(true)}
             style={{
-              width: 52, textAlign: 'center', color: knobAccent, fontFamily: mono, fontSize: 14,
-              fontVariantNumeric: 'tabular-nums', padding: '2px 4px',
+              width: compactValue ? 36 : 52, textAlign: 'center', color: knobAccent,
+              fontFamily: mono, fontSize: compactValue ? 12 : 14,
+              fontVariantNumeric: 'tabular-nums', padding: compactValue ? '1px 2px' : '2px 4px',
               border: `1px solid transparent`, cursor: 'text', borderRadius: 2, fontWeight: 600,
             }}
           >
@@ -2577,9 +3601,16 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
 // Layout: width is responsive via viewBox; the horizontal padding (60 px
 // each side) matches PositionHistogram below so the walls line up
 // between the two views in the column.
-function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, recentMeasurements, col, wall, bg, ionisedCol, mono }) {
-  const W = 480, H = 130;
-  const PAD_L = 60, PAD_R = 60;
+function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, recentMeasurements, col, wall, bg, ionisedCol, mono, eHistMax }) {
+  const extendedY = Number.isFinite(eHistMax) && eHistMax > 0 && V0 > 0;
+  const W = 480;
+  const H = extendedY ? 240 : 130;
+  // PAD_R trimmed to 4 in extended mode: the energy histogram sits
+  // immediately to the right of the sim and itself carries the V₀
+  // label, so the sim no longer needs a 60-px right gutter for its
+  // own V₀ annotation. Legacy mode (Tab 2/3) keeps the original 60-px
+  // gutter for the in-panel V₀ label.
+  const PAD_L = 60, PAD_R = extendedY ? 4 : 60;
   const INNER_W = W - PAD_L - PAD_R;
   // Walls drawn inside the plot area so the regions outside [0, L]
   // remain visible — this is where the quantum wavefunction's leakage
@@ -2588,8 +3619,15 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
   function xToPx(xv) { return PAD_L + ((xv - X_PLOT_MIN) / X_PLOT_RANGE) * INNER_W; }
   const wallLeftX  = xToPx(0);
   const wallRightX = xToPx(L);
-  const ceilY  = 22;             // top of well wall = V0 level
-  const floorY = H - 14;         // bottom of well = V = 0
+  // Y-axis padding: extended mode trims to 4 px top & bottom so the
+  // panel's plot area maximally fills its 240-px height, and pixel-
+  // aligns with the vertical energy histogram (which uses the same
+  // 4-px paddings). Legacy keeps the original 14-px floor margin.
+  const topPad = extendedY ? 4 : 14;
+  const floorY = H - (extendedY ? 4 : 14);
+  const ceilY = extendedY
+    ? floorY - (V0 / eHistMax) * (floorY - topPad)
+    : 22;
   const boxHeight = floorY - ceilY;
   const r = 6;                   // particle radius
 
@@ -2615,20 +3653,61 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
 
   const flashY = floorY - 2; // right above the floor, distinct from the particle
 
+  // Particle rendered as an absolutely-positioned HTML element
+  // overlaid on the SVG instead of an SVG <circle>: the outer SVG uses
+  // preserveAspectRatio="none" so its y-axis pixel-shares with the
+  // energy histogram, but that stretches SVG geometry non-uniformly
+  // and turns any <circle> into an ellipse (taller-than-wide when the
+  // cell is narrow, wider-than-tall when the cell is wide). An HTML
+  // span with fixed pixel width/height stays circular regardless,
+  // positioned in % over the SVG so it tracks the same x/y coords.
+  const particleStyle = (cxVB, cyVB, sizePx, colour, fill, strokeW) => ({
+    position: 'absolute',
+    left: `${(cxVB / W) * 100}%`,
+    top:  `${(cyVB / H) * 100}%`,
+    width: sizePx, height: sizePx,
+    borderRadius: '50%',
+    background: colour,
+    opacity: fill,
+    border: `${strokeW}px solid ${colour}`,
+    boxSizing: 'border-box',
+    transform: 'translate(-50%, -50%)',
+    pointerEvents: 'none',
+  });
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', background: bg, borderRadius: 2 }}>
-      {/* floor of well (V = 0) */}
-      <line x1={wallLeftX} x2={wallRightX} y1={floorY} y2={floorY} stroke={wall} strokeWidth={2} />
-      {/* walls (V jumps from 0 to V0 at the box edges) */}
-      <line x1={wallLeftX}  x2={wallLeftX}  y1={ceilY} y2={floorY} stroke={wall} strokeWidth={5} />
-      <line x1={wallRightX} x2={wallRightX} y1={ceilY} y2={floorY} stroke={wall} strokeWidth={5} />
-      {/* dashed line at V0 level (top of the rim) */}
-      <line x1={wallLeftX} x2={wallRightX} y1={ceilY} y2={ceilY}
+    <div style={{ position: 'relative', background: bg, borderRadius: 2, lineHeight: 0 }}>
+    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}
+         preserveAspectRatio="none"
+         style={{ display: 'block' }}>
+      {/* Full finite-square potential outline traced as one polyline,
+          same convention the Quantum panel and Tab 3 use: V = V₀ outside
+          the well (extending to the panel edges), drops to V = 0 inside.
+          The classical particle is the same particle in the same well,
+          so the well should look the same way on both sides. */}
+      <path
+        d={
+          `M${PAD_L},${ceilY} ` +
+          `L${wallLeftX.toFixed(2)},${ceilY} ` +
+          `L${wallLeftX.toFixed(2)},${floorY} ` +
+          `L${wallRightX.toFixed(2)},${floorY} ` +
+          `L${wallRightX.toFixed(2)},${ceilY} ` +
+          `L${PAD_L + INNER_W},${ceilY}`
+        }
+        fill="none" stroke={wall} strokeWidth={3} strokeLinejoin="round"
+      />
+      {/* Dashed V₀ ceiling spans the full panel width — V outside the
+          well IS V₀, so the marker continues past each wall. In
+          extended mode the energy histogram next door labels V₀ on
+          its own right axis, so the sim's in-panel V₀ label would be
+          redundant (and there's no room in the trimmed PAD_R for it). */}
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={ceilY} y2={ceilY}
         stroke={ionisedCol} strokeWidth={1} strokeDasharray="3 4" opacity={0.5} />
-      <text x={wallRightX + 6} y={ceilY + 4}
-        fill={ionisedCol} fontFamily={mono} fontSize={11}>
-        V₀
-      </text>
+      {!extendedY && (
+        <text x={PAD_L + INNER_W + 6} y={ceilY + 4}
+          fill={ionisedCol} fontFamily={mono} fontSize={11}>
+          V₀
+        </text>
+      )}
 
       {/* Recent measurement flashes — each measurement (every Nth step)
           leaves a small fading dot near the floor, so the discrete
@@ -2641,13 +3720,11 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
         return <circle key={i} cx={xToPx(m.x)} cy={flashY} r={rr} fill={col} opacity={opacity * 0.85} />;
       })}
 
-      {!isIonised ? (
-        <circle cx={px} cy={py} r={r}
-          fill={col} fillOpacity={0.9} stroke={col} strokeWidth={1.5} />
-      ) : (
-        // Ionised state: particle drawn above the box with a dashed
-        // escape trail and an upward arrow. The box is still visible so
-        // the rim (V0) remains the visual anchor for the threshold.
+      {isIonised && (
+        // Ionised state: escape trail and arrow drawn in SVG (1D lines
+        // don't suffer the aspect-ratio distortion that catches circles).
+        // The faded "escaped" particle dot is rendered as an HTML span
+        // below the SVG so it stays circular.
         <g>
           <line x1={W / 2} y1={ceilY - 2} x2={W / 2} y2={8}
             stroke={ionisedCol} strokeWidth={2} strokeDasharray="2 3" opacity={0.75} />
@@ -2655,15 +3732,23 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
             points={`${W / 2 - 5},10 ${W / 2 + 5},10 ${W / 2},2`}
             fill={ionisedCol}
           />
-          <circle cx={W / 2} cy={ceilY - 12} r={r}
-            fill={col} fillOpacity={0.4} stroke={col} strokeWidth={1} />
           <text x={W / 2 + 18} y={14}
-            fill={ionisedCol} fontFamily={mono} fontSize={12}>
+            fill={ionisedCol} fontFamily={mono} fontSize={11}>
             escaped over V₀
           </text>
         </g>
       )}
     </svg>
+    {/* HTML overlays — kept circular by fixed pixel sizing. The
+        outer div is position:relative so % coords map to the SVG's
+        rendered box. */}
+    {!isIonised && (
+      <span style={particleStyle(px, py, 12, col, 0.9, 1.5)} />
+    )}
+    {isIonised && (
+      <span style={particleStyle(W / 2, ceilY - 12, 12, col, 0.4, 1)} />
+    )}
+    </div>
   );
 }
 
@@ -2688,12 +3773,54 @@ function WavefunctionView({
   // share the same nm axis so a wider well visibly fills more of the panel.
   // Tab 1 omits these and falls back to engine-unit rendering unchanged.
   lengthNm, xMinNm, xMaxNm,
+  // Well depth (in the same units as the measured energy E carried by
+  // recentMeasurements entries). Used to place flash dots at the
+  // (x, E) location the measurement actually returned: E = 0 maps to
+  // the floor of the panel, E = v0 to the V₀ rim, E ≥ v0 climbs into
+  // the ionised region above.
+  v0,
+  // Optional energy-histogram max. When provided, the panel adopts the
+  // *extended* layout: same y-mapping as the energy histogram (E = 0
+  // at the bottom, E = eHistMax at the top, V₀ line at the same y on
+  // both panels), so the sim and P(E) share the y-axis pixel-for-pixel
+  // and ionised flashes have somewhere to land. Omit (Tab 2/3 for
+  // now) for the legacy V₀-at-top layout.
+  eHistMax,
+  // Slider energy (the prep). In extended layout the ψ² curve and the
+  // Re/Im ψ oscillation are anchored at this y on the energy axis,
+  // rather than at the floor of the well — so the wavefunction
+  // visually "sits" at its energy level. Defaults to V₀/2 if not
+  // supplied, which puts the curve in the middle of the bound region.
+  eSet,
+  // Optional array of bound-state {E, ...} objects. When provided
+  // (Tab 1, extended layout, Show eigenstates ON), the panel draws
+  // thin dashed horizontal lines at each E_n on its shared y-axis,
+  // with "n = k" labels in the left gutter. These connect visually
+  // to the eigenstate tick marks on the energy histogram next door.
+  showEigenStates,
+  // When true (Tab 2/3 narrower sim cells), the eigenstate labels in
+  // the left gutter render as just the number ("1", "2", ...) instead
+  // of "n=k" — the gutter pixel width after preserveAspectRatio="none"
+  // compression isn't wide enough to fit the full label without
+  // truncating to "n=".
+  compactNLabels = false,
 }) {
   // psiMode: 'density' = |ψ|², 'wavefunction' = Re ψ + Im ψ, 'off' = no curve
   const showDensity      = psiMode === 'density';
   const showWavefunction = psiMode === 'wavefunction';
-  const W = 480, H = 130;
-  const PAD_L = 60, PAD_R = 60;
+  const extendedY = Number.isFinite(eHistMax) && eHistMax > 0 && v0 > 0;
+  const W = 480;
+  // Extended layout: 240 px tall (was 180). Taller panel buys headroom
+  // for two things: (a) the ionised region above V₀, so flashes at
+  // E > V₀ land on-panel rather than at the rim; and (b) the option
+  // to anchor ψ² / Re ψ / Im ψ at the slider energy E_set instead of
+  // at the floor — making the wavefunction visually "sit" at its
+  // energy level on the shared y-axis.
+  const H = extendedY ? 240 : 130;
+  // PAD_R trimmed to 4 in extended mode: the energy histogram next
+  // door carries the V₀ label on its own outer axis, so the sim's
+  // 60-px right gutter is no longer needed. Legacy keeps 60.
+  const PAD_L = 60, PAD_R = extendedY ? 4 : 60;
   const INNER_W = W - PAD_L - PAD_R;
   const nmMode = lengthNm !== undefined && xMinNm !== undefined && xMaxNm !== undefined;
   const xRangeNm = nmMode ? (xMaxNm - xMinNm) : 1;
@@ -2713,10 +3840,36 @@ function WavefunctionView({
   }
   const wallLeftX  = xToPx(0);
   const wallRightX = xToPx(L);
-  const ceilY  = 22;
-  const floorY = H - 14;
+  // y-axis geometry. Legacy layout: V₀ pinned to the top of the panel
+  // (ceilY = 22, floorY = H - 14). Extended layout (when eHistMax is
+  // supplied): the panel covers E ∈ [0, eHistMax], with V₀ at the
+  // proportional y so the V₀ line aligns horizontally with the energy
+  // histogram's V₀ line, and the upper region above V₀ stays open
+  // for ionised flashes. The 4-px padding (was 14) matches the energy
+  // histogram's tight paddings so the V₀ line and E = 0 axis baseline
+  // align pixel-for-pixel between sim and histogram.
+  const topPad = extendedY ? 4 : 14;
+  const floorY = H - (extendedY ? 4 : 14);
+  const ceilY = extendedY
+    ? floorY - (v0 / eHistMax) * (floorY - topPad)
+    : 22;
   const r = 6;
   const flashY = floorY - 2;
+  // Energy-to-y mapping for (x, E) flashes. Bound (E < v0) lands in
+  // the well; ionised (E ≥ v0) climbs into the upper region. In legacy
+  // layout the flash y is clamped between floor and ceil (the panel
+  // doesn't have headroom for ionised events). In extended layout the
+  // flash y spans the whole panel height up to E = eHistMax.
+  function yForE(E) {
+    if (!Number.isFinite(E)) return floorY;
+    if (extendedY) {
+      const f = Math.max(0, Math.min(1, E / eHistMax));
+      return floorY - f * (floorY - topPad);
+    }
+    if (!(v0 > 0)) return floorY;
+    const f = Math.max(0, Math.min(1, E / v0));
+    return floorY - f * (floorY - ceilY);
+  }
 
   // Two display modes:
   //   - |ψ|² (probability density): a non-negative curve filled from
@@ -2730,9 +3883,28 @@ function WavefunctionView({
   //     The Im(ψ) part is dropped — it does its own oscillation but
   //     adding both curves clutters the picture for the chemistry
   //     audience. Phase color encoding is a possible future addition.
-  const ampMax  = (floorY - ceilY) * 0.75;
-  const midY    = (floorY + ceilY) / 2;
-  const halfAmp = (floorY - ceilY) * 0.40;
+  // Wavefunction amplitude scaling. Legacy layout (Tab 2/3, default
+  // H = 130): the curve grows from floorY upward, filling 75 % of the
+  // bound region height. Extended layout (Tab 1 with eHistMax): the
+  // curve is anchored at the slider energy E_set on the y-axis, so the
+  // wavefunction visually sits at its energy level.
+  //
+  // Cap by panel TOP (topPad) rather than the V₀ rim: when E_set is
+  // close to V₀ the wave is allowed to extend past V₀ into the ionised
+  // upper region of the panel rather than shrinking to invisibility.
+  // The SVG's overflow:visible also lets downward lobes spill into the
+  // position histogram. The whole point is to keep the wave visually
+  // present at every E.
+  const anchorY = extendedY
+    ? yForE(Number.isFinite(eSet) ? eSet : v0 / 2)
+    : floorY;
+  const ampMax  = extendedY
+    ? Math.max(0, Math.min(70, anchorY - topPad - 4))
+    : (floorY - ceilY) * 0.75;
+  const midY    = extendedY ? anchorY : (floorY + ceilY) / 2;
+  const halfAmp = extendedY
+    ? Math.max(0, Math.min(35, anchorY - topPad - 4))
+    : (floorY - ceilY) * 0.40;
   let path = '';   // for |ψ|² mode: filled density curve
   let rePath = ''; // for ψ mode: Re(ψ) outline
   let imPath = ''; // for ψ mode: Im(ψ) outline
@@ -2760,10 +3932,10 @@ function WavefunctionView({
         for (let i = 0; i < DENSITY_GRID_N; i++) {
           const xs = sampleEngMin + (sampleEngRange * i) / (DENSITY_GRID_N - 1);
           const X = xToPx(xs).toFixed(2);
-          const Y = (floorY - ampMax * (density[i] / dMax)).toFixed(2);
-          path += (i === 0 ? `M${X},${floorY} L${X},${Y}` : ` L${X},${Y}`);
+          const Y = (anchorY - ampMax * (density[i] / dMax)).toFixed(2);
+          path += (i === 0 ? `M${X},${anchorY} L${X},${Y}` : ` L${X},${Y}`);
         }
-        path += ` L${(PAD_L + INNER_W).toFixed(2)},${floorY} Z`;
+        path += ` L${(PAD_L + INNER_W).toFixed(2)},${anchorY} Z`;
       }
     } else if (showWavefunction) {
       // ψ mode — plot both Re(ψ) and Im(ψ) as separate outline curves
@@ -2814,25 +3986,101 @@ function WavefunctionView({
   }
 
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block', background: bg, borderRadius: 2 }}>
+    <svg width="100%"
+         height={extendedY ? H : undefined}
+         preserveAspectRatio={extendedY ? 'none' : undefined}
+         viewBox={`0 0 ${W} ${H}`}
+         overflow={extendedY ? 'visible' : undefined}
+         style={{
+           display: 'block', background: bg, borderRadius: 2,
+           // In extended mode the sim is allowed to paint outside its
+           // own viewBox so the wavefunction can extend visually past
+           // the floor into the position histogram's panel below.
+           // overflow:visible + position:relative + z-index:1 puts this
+           // SVG on top of the PH cell in z-order.
+           ...(extendedY ? { overflow: 'visible', position: 'relative', zIndex: 1 } : {}),
+         }}>
       {/* faint "outside the box" shading to make the forbidden region read */}
       <rect x={PAD_L} y={ceilY} width={wallLeftX  - PAD_L} height={floorY - ceilY}
             fill={ionisedCol} opacity={0.04} />
       <rect x={wallRightX} y={ceilY} width={(PAD_L + INNER_W) - wallRightX} height={floorY - ceilY}
             fill={ionisedCol} opacity={0.04} />
 
-      {/* floor of well (V = 0) */}
-      <line x1={wallLeftX} x2={wallRightX} y1={floorY} y2={floorY} stroke={wall} strokeWidth={2} />
-      {/* walls (V jumps from 0 to V0 at the box edges). Thinner in nm
-          mode because the visible box can be narrow (a small L on the
-          shared axis) and 5-px walls would dominate. */}
-      <line x1={wallLeftX}  x2={wallLeftX}  y1={ceilY} y2={floorY} stroke={wall} strokeWidth={nmMode ? 2 : 5} />
-      <line x1={wallRightX} x2={wallRightX} y1={ceilY} y2={floorY} stroke={wall} strokeWidth={nmMode ? 2 : 5} />
-      {/* dashed V0 line */}
-      <line x1={wallLeftX} x2={wallRightX} y1={ceilY} y2={ceilY}
+      {/* Full finite-square potential outline traced as one polyline,
+          the same convention Tab 3 uses for every shape: V = V₀ to the
+          left of the left wall, drops to V = 0 inside the well, then
+          climbs back to V = V₀ to the right of the right wall. Drawing
+          it as a single path makes the well shape read consistently
+          across all three tabs. Stroke 3 — a touch thinner than the
+          previous 5 so the curves on Tab 3's parabolic/Coulomb look
+          balanced with the square walls here. */}
+      <path
+        d={
+          `M${PAD_L},${ceilY} ` +
+          `L${wallLeftX.toFixed(2)},${ceilY} ` +
+          `L${wallLeftX.toFixed(2)},${floorY} ` +
+          `L${wallRightX.toFixed(2)},${floorY} ` +
+          `L${wallRightX.toFixed(2)},${ceilY} ` +
+          `L${PAD_L + INNER_W},${ceilY}`
+        }
+        fill="none" stroke={wall} strokeWidth={3} strokeLinejoin="round"
+      />
+      {/* Dashed V₀ ceiling — spans the FULL panel width (outside the
+          walls is V = V₀, not V = 0, so the dashed marker continues
+          past each wall). Matches Tab 3's potential-outline convention.
+          In extended mode the energy histogram next door carries the
+          V₀ label on its outer (right) axis, so the in-panel label is
+          suppressed and there's no room in the trimmed PAD_R anyway. */}
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={ceilY} y2={ceilY}
         stroke={ionisedCol} strokeWidth={1} strokeDasharray="3 4" opacity={0.5} />
-      <text x={wallRightX + 6} y={ceilY + 4}
-        fill={ionisedCol} fontFamily={mono} fontSize={11}>V₀</text>
+      {!extendedY && (
+        <text x={PAD_L + INNER_W + 6} y={ceilY + 4}
+          fill={ionisedCol} fontFamily={mono} fontSize={11}>V₀</text>
+      )}
+
+      {/* Bound-state guide lines. When Show eigenstates is on in the
+          extended layout, draw a thin dashed horizontal line at each
+          E_n across the panel with an "n = k" label in the left
+          gutter. These connect visually to the eigenstate tick marks
+          on the energy histogram next door, so the student can see
+          which bound state sits at which y. Rendered before ψ so the
+          curve paints over them. */}
+      {extendedY && showEigenStates && showEigenStates.map((s, i) => {
+        const E = s.E;
+        if (E < 0 || E > eHistMax) return null;
+        const tY = yForE(E);
+        return (
+          <g key={`n${i}`}>
+            <line x1={PAD_L} x2={PAD_L + INNER_W} y1={tY} y2={tY}
+                  stroke={col} strokeWidth={0.7} strokeDasharray="1 3" opacity={0.45} />
+            <text x={PAD_L - 4} y={tY + 3} textAnchor="end"
+                  fill={col} fontFamily={mono} fontSize={10} opacity={0.7}>
+              {compactNLabels
+                ? `${i + 1}`
+                : <><tspan fontStyle="italic">n</tspan>={i + 1}</>}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* E_set marker: faint dashed horizontal line at the slider
+          energy, spanning the full panel width. Pairs with the "set"
+          tick on the energy histogram to its right so the y-axis
+          anchor of ψ² (and the Re/Im ψ midline) is visible — the
+          curve "sits" at this energy rather than hovering above the
+          well floor. Only drawn in the extended layout where the
+          y-axis carries energy. */}
+      {extendedY && Number.isFinite(eSet) && (
+        <g>
+          <line x1={PAD_L} x2={PAD_L + INNER_W}
+            y1={anchorY} y2={anchorY}
+            stroke={col} strokeWidth={1} strokeDasharray="2 4" opacity={0.55} />
+          <text x={PAD_L - 4} y={anchorY + 3} textAnchor="end"
+            fill={col} fontFamily={mono} fontSize={10} opacity={0.85}>
+            E
+          </text>
+        </g>
+      )}
 
       {!isIonised && path && showDensity && (
         <path d={path} fill={col} fillOpacity={0.28} stroke={col} strokeWidth={1.8} />
@@ -2862,7 +4110,10 @@ function WavefunctionView({
       {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
         const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
-        return <circle key={i} cx={xToPx(m.x)} cy={flashY} r={rr} fill={col} opacity={opacity * 0.85} />;
+        const cy = yForE(m.E);
+        const isAboveV0 = Number.isFinite(m.E) && v0 > 0 && m.E > v0;
+        const fillColour = isAboveV0 ? ionisedCol : col;
+        return <circle key={i} cx={xToPx(m.x)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
       })}
 
       {isIonised && (
@@ -2871,11 +4122,367 @@ function WavefunctionView({
             stroke={ionisedCol} strokeWidth={2} strokeDasharray="2 3" opacity={0.75} />
           <polygon points={`${W / 2 - 5},10 ${W / 2 + 5},10 ${W / 2},2`} fill={ionisedCol} />
           <text x={W / 2 + 18} y={14}
-            fill={ionisedCol} fontFamily={mono} fontSize={12}>
+            fill={ionisedCol} fontFamily={mono} fontSize={11}>
             ionised — continuum state (not drawn)
           </text>
         </g>
       )}
+    </svg>
+  );
+}
+
+// =============================================================
+// TAB 3 — SHAPE-AWARE WAVEFUNCTION VIEW
+// =============================================================
+//
+// Mirrors Tab 2's WavefunctionView but with two shape-driven changes:
+//   1. The potential outline is drawn by tracing the V_eV array, so
+//      parabolic and Coulomb shapes render correctly (the box-with-walls
+//      template Tab 2 uses can't curve). Finite-square traces the same
+//      step profile and so still looks like a box.
+//   2. The wavefunction is sampled from the FD/centred grid via
+//      psiOnGrid + densityAtTab3 rather than from the analytical
+//      finiteWellPsi. Same |Σ c_n ψ_n exp(-i E_n t)|² content, just a
+//      different lookup path.
+// The position axis runs from xGrid_nm[0] to xGrid_nm[last] — already
+// centred at x = 0 for Tab 3 by construction.
+
+function Tab3WavefunctionView({
+  states, probs, t, isIonised, psiMode,
+  xGrid_nm, V_eV, v0eV, lengthNm,
+  col, wall, bg, ionisedCol, mono,
+  showTheory,
+  // Optional recent-measurement flashes — same convention as
+  // WavefunctionView. x values are in nm, plotted at the panel floor.
+  recentMeasurements,
+  // Classical turning point at the prep energy (nm). Drawn as a soft
+  // vertical wall on each side. For finite-square this lands at ±L/2;
+  // for parabolic and Coulomb it shifts with E. When omitted (or
+  // Infinity, for E ≥ V₀), no wall is drawn.
+  xTurningNm,
+  // Explicit visible x-range in nm. Default to ±(L/2 + 0.3 L) so the
+  // well pixel-width matches PositionHistogram below — earlier we used
+  // the FD grid extent here, which made the well in the ψ view visibly
+  // narrower than the well in the histogram for shapes where the FD
+  // grid is wider than the histogram.
+  xMinNm: xMinNmProp, xMaxNm: xMaxNmProp,
+  // Extended-layout props (Tab 3 scatter-with-marginals layout). When
+  // eHistMax is supplied along with v0eV > 0, the panel switches to a
+  // 240-px-tall view that pixel-shares the y-axis with the vertical
+  // energy histogram next door, anchors ψ at E_set, and overflows
+  // wavefunction lobes into the position histogram below.
+  eHistMax,
+  eSet,
+  showEigenStates,
+  // Tab 3's narrower sim cell needs compact eigenstate-line labels —
+  // just the number ("1", "2", ...) instead of "n=k". See the matching
+  // prop on WavefunctionView for the full rationale.
+  compactNLabels = false,
+}) {
+  const showDensity      = psiMode === 'density';
+  const showWavefunction = psiMode === 'wavefunction';
+  const extendedY = Number.isFinite(eHistMax) && eHistMax > 0 && v0eV > 0;
+  const W = 480;
+  const H = extendedY ? 240 : 130;
+  // PAD_R trimmed in extended mode so the panel butts up close to the
+  // energy histogram (which carries the V₀ label on its outer axis).
+  const PAD_L = 60, PAD_R = extendedY ? 4 : 60;
+  const INNER_W = W - PAD_L - PAD_R;
+  // Y-axis geometry. Legacy (Tab 2/3 pre-scatter): V₀ pinned to the top
+  // at ceilY = 22, floor 14 px above the bottom. Extended: 4-px margins
+  // and V₀ at the proportional y on a shared E-axis [0, eHistMax].
+  const topPad = extendedY ? 4 : 14;
+  const floorY = H - (extendedY ? 4 : 14);
+  const ceilY  = extendedY
+    ? floorY - (v0eV / eHistMax) * (floorY - topPad)
+    : 22;
+  const r = 6;
+  const flashY = floorY - 2;
+  // E_set anchor for ψ/ψ² in extended mode (E = eSet maps to anchorY).
+  function yForE(E) {
+    if (!Number.isFinite(E)) return floorY;
+    if (extendedY) {
+      const f = Math.max(0, Math.min(1, E / eHistMax));
+      return floorY - f * (floorY - topPad);
+    }
+    if (!(v0eV > 0)) return floorY;
+    const f = Math.max(0, Math.min(1, E / v0eV));
+    return floorY - f * (floorY - ceilY);
+  }
+  const anchorY = extendedY
+    ? yForE(Number.isFinite(eSet) ? eSet : v0eV / 2)
+    : floorY;
+
+  // Visible x-range. Defaults to ±0.8 L (matches PositionHistogram so
+  // the well pixel-width is identical between the two views); explicit
+  // bounds via props override.
+  const xMinNm = xMinNmProp !== undefined ? xMinNmProp : -(lengthNm * 0.8);
+  const xMaxNm = xMaxNmProp !== undefined ? xMaxNmProp : +(lengthNm * 0.8);
+  const xRangeNm = xMaxNm - xMinNm;
+  function xToPx(xNm) {
+    return PAD_L + ((xNm - xMinNm) / xRangeNm) * INNER_W;
+  }
+
+  // Potential outline: trace V_eV[i] vs xGrid_nm[i] and map to the
+  // panel's y range, with V = 0 at floorY and V = v0eV at ceilY. The
+  // shape-aware part is "for free" — the V_eV array already encodes
+  // square / parabolic / Coulomb correctly. Clamp V ≥ v0eV to ceilY so
+  // the dashed V₀ marker is still the visible top of the well even when
+  // V hits the asymptote (Coulomb) or the truncation ceiling (parabolic).
+  let potentialPath = '';
+  if (xGrid_nm.length > 0) {
+    for (let i = 0; i < xGrid_nm.length; i++) {
+      const xPx = xToPx(xGrid_nm[i]);
+      const V = Math.min(V_eV[i], v0eV);
+      const yFrac = v0eV > 0 ? V / v0eV : 0;
+      const yPx  = floorY - yFrac * (floorY - ceilY);
+      potentialPath += (i === 0 ? 'M' : ' L') + xPx.toFixed(2) + ',' + yPx.toFixed(2);
+    }
+  }
+
+  // Two display modes: |ψ|² density (filled curve from anchor) or
+  // Re ψ + Im ψ (outlines crossing the centerline at the anchor). In
+  // extended mode the curves are anchored at E_set (textbook style);
+  // in legacy mode they sit on the floor / centre-line.
+  //
+  // Cap by panel TOP (topPad) rather than the V₀ rim: when E_set is
+  // close to V₀ the wave extends past V₀ into the ionised upper
+  // region rather than shrinking to invisibility. SVG overflow:visible
+  // lets downward lobes spill into the position histogram. Keeping
+  // the wave visible at every E is the priority.
+  const ampMax  = extendedY
+    ? Math.max(0, Math.min(70, anchorY - topPad - 4))
+    : (floorY - ceilY) * 0.75;
+  const midY    = extendedY ? anchorY : (floorY + ceilY) / 2;
+  const halfAmp = extendedY
+    ? Math.max(0, Math.min(35, anchorY - topPad - 4))
+    : (floorY - ceilY) * 0.40;
+  let path = '';
+  let rePath = '';
+  let imPath = '';
+
+  // Sample on the FD grid directly so we don't pay a second
+  // interpolation pass; the grid resolution (~512 points) is plenty for
+  // a 360-pixel-wide visualisation.
+  const N = xGrid_nm.length;
+  if (!isIonised && states.length > 0 && N > 1) {
+    if (showDensity) {
+      let dMax = 0;
+      const density = new Float64Array(N);
+      for (let i = 0; i < N; i++) {
+        density[i] = densityAtTab3(states, probs, xGrid_nm[i], t, xGrid_nm);
+        if (density[i] > dMax) dMax = density[i];
+      }
+      if (dMax > 0) {
+        // anchorY = floorY in legacy mode, = E_set in extended mode.
+        const aY = anchorY;
+        for (let i = 0; i < N; i++) {
+          const xPx = xToPx(xGrid_nm[i]).toFixed(2);
+          const yPx = (aY - ampMax * (density[i] / dMax)).toFixed(2);
+          path += (i === 0 ? `M${xPx},${aY} L${xPx},${yPx}` : ` L${xPx},${yPx}`);
+        }
+        path += ` L${xToPx(xMaxNm).toFixed(2)},${aY} Z`;
+      }
+    } else if (showWavefunction) {
+      const re = new Float64Array(N);
+      const im = new Float64Array(N);
+      let psi2Max = 0;
+      for (let i = 0; i < N; i++) {
+        let reSum = 0, imSum = 0;
+        for (let k = 0; k < states.length; k++) {
+          if (probs[k] < 1e-14) continue;
+          const psi = psiOnGrid(states[k], xGrid_nm, xGrid_nm[i]);
+          if (psi === 0) continue;
+          const c = Math.sqrt(probs[k]);
+          const ph = -states[k].E * t;
+          reSum += c * psi * Math.cos(ph);
+          imSum += c * psi * Math.sin(ph);
+        }
+        re[i] = reSum; im[i] = imSum;
+        const psi2 = reSum * reSum + imSum * imSum;
+        if (psi2 > psi2Max) psi2Max = psi2;
+      }
+      const aMax = Math.sqrt(psi2Max);
+      if (aMax > 0) {
+        for (let i = 0; i < N; i++) {
+          const xPx = xToPx(xGrid_nm[i]).toFixed(2);
+          const Yre = (midY - halfAmp * (re[i] / aMax)).toFixed(2);
+          const Yim = (midY - halfAmp * (im[i] / aMax)).toFixed(2);
+          rePath += (i === 0 ? `M${xPx},${Yre}` : ` L${xPx},${Yre}`);
+          imPath += (i === 0 ? `M${xPx},${Yim}` : ` L${xPx},${Yim}`);
+        }
+      }
+    }
+  }
+
+  // Centerline marker — x = 0 is a meaningful axis position on every
+  // shape (the well centre), so a faint dashed vertical at x = 0 anchors
+  // the eye even when the potential is smooth.
+  const centerPx = xToPx(0);
+  // Axis labels for −L/2 and +L/2 — the well boundaries in the FWHM
+  // convention. For parabolic and Coulomb these are not physical walls,
+  // but they're still where V = V₀/2 by definition of L, which the
+  // PEDAGOGY ties into the "same L means the same width on every shape"
+  // story. Light tick marks rather than full lines.
+  const halfLPx = xToPx(lengthNm / 2);
+  const minusHalfLPx = xToPx(-lengthNm / 2);
+
+  return (
+    <svg width="100%"
+         height={extendedY ? H : undefined}
+         preserveAspectRatio={extendedY ? 'none' : undefined}
+         viewBox={`0 0 ${W} ${H}`}
+         overflow={extendedY ? 'visible' : undefined}
+         style={{
+           display: 'block', background: bg, borderRadius: 2,
+           ...(extendedY
+             ? { overflow: 'visible', position: 'relative', zIndex: 1 }
+             : { overflow: 'hidden' }),
+         }}>
+      {/* Floor line — V = 0 across the full visible x range. */}
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY}
+            stroke={wall} strokeWidth={1.5} opacity={0.55} />
+
+      {/* Dashed V₀ ceiling — same role as Tab 2's V₀ marker. In
+          extended mode the energy histogram next door labels V₀ on
+          its outer axis, so the in-panel label is suppressed. */}
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={ceilY} y2={ceilY}
+            stroke={ionisedCol} strokeWidth={1} strokeDasharray="3 4" opacity={0.5} />
+      {!extendedY && (
+        <text x={PAD_L + INNER_W + 6} y={ceilY + 4}
+              fill={ionisedCol} fontFamily={mono} fontSize={11}>V₀</text>
+      )}
+
+      {/* Bound-state guidelines — dashed horizontal lines at each E_n
+          across the sim panel when Show eigenstates is on. Pairs with
+          the eigenstate ticks on the energy histogram. */}
+      {extendedY && showEigenStates && showEigenStates.map((s, i) => {
+        const E = s.E;
+        if (E < 0 || E > eHistMax) return null;
+        const tY = yForE(E);
+        return (
+          <g key={`n${i}`}>
+            <line x1={PAD_L} x2={PAD_L + INNER_W} y1={tY} y2={tY}
+                  stroke={col} strokeWidth={0.7} strokeDasharray="1 3" opacity={0.45} />
+            <text x={PAD_L - 4} y={tY + 3} textAnchor="end"
+                  fill={col} fontFamily={mono} fontSize={10} opacity={0.7}>
+              {compactNLabels
+                ? `${i + 1}`
+                : <><tspan fontStyle="italic">n</tspan>={i + 1}</>}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* E_set marker — dashed horizontal at the slider energy. */}
+      {extendedY && Number.isFinite(eSet) && (
+        <g>
+          <line x1={PAD_L} x2={PAD_L + INNER_W}
+                y1={anchorY} y2={anchorY}
+                stroke={col} strokeWidth={1} strokeDasharray="2 4" opacity={0.55} />
+          <text x={PAD_L - 4} y={anchorY + 3} textAnchor="end"
+                fill={col} fontFamily={mono} fontSize={10} opacity={0.85}>
+            E
+          </text>
+        </g>
+      )}
+
+      {/* Shape-aware potential outline. Stroke 3 — a touch thinner than
+          5 so the parabolic and Coulomb curves don't look heavy. Same
+          weight as Tab 1/2's finite-square outline path. */}
+      {potentialPath && (
+        <path d={potentialPath} fill="none" stroke={wall} strokeWidth={3} strokeLinejoin="round" />
+      )}
+
+      {/* Centerline + L/2 tick marks. */}
+      <line x1={centerPx} x2={centerPx} y1={floorY} y2={floorY - 4}
+            stroke={wall} strokeWidth={1} opacity={0.5} />
+      <text x={centerPx} y={floorY + 12} textAnchor="middle"
+            fill={wall} fontFamily={mono} fontSize={10} opacity={0.55}>0</text>
+      <text x={minusHalfLPx} y={floorY + 12} textAnchor="middle"
+            fill={wall} fontFamily={mono} fontSize={10} opacity={0.55}>−L/2</text>
+      <text x={halfLPx} y={floorY + 12} textAnchor="middle"
+            fill={wall} fontFamily={mono} fontSize={10} opacity={0.55}>+L/2</text>
+
+      {/* Classical turning point walls. Drawn as solid vertical lines
+          inside the panel where V(x) = E_set. For finite-square these
+          land exactly at the L/2 tick marks; for parabolic and Coulomb
+          they move with the energy slider. Skipped when the turning
+          point falls off-panel (deep Coulomb states near V₀). */}
+      {Number.isFinite(xTurningNm) && xTurningNm > 0 && (() => {
+        const lpx = xToPx(-xTurningNm);
+        const rpx = xToPx(+xTurningNm);
+        const onPanel = (px) => px >= PAD_L && px <= PAD_L + INNER_W;
+        return (
+          <g>
+            {onPanel(lpx) && <line x1={lpx} x2={lpx} y1={ceilY} y2={floorY} stroke={wall} strokeWidth={1.5} opacity={0.85} />}
+            {onPanel(rpx) && <line x1={rpx} x2={rpx} y1={ceilY} y2={floorY} stroke={wall} strokeWidth={1.5} opacity={0.85} />}
+          </g>
+        );
+      })()}
+
+      {!isIonised && path && showDensity && (
+        <path d={path} fill={col} fillOpacity={0.28} stroke={col} strokeWidth={1.8} />
+      )}
+
+      {!isIonised && showWavefunction && (
+        <g>
+          <line x1={PAD_L} x2={PAD_L + INNER_W} y1={midY} y2={midY}
+                stroke="#9aa0b4" strokeWidth={1} opacity={0.6} strokeDasharray="3 4" />
+          {rePath && <path d={rePath} fill="none" stroke={col} strokeWidth={1.8} />}
+          {imPath && <path d={imPath} fill="none" stroke={ionisedCol} strokeWidth={1.8} />}
+          <g transform={`translate(${PAD_L + 6}, ${ceilY + 8})`}>
+            <line x1={0} y1={0} x2={14} y2={0} stroke={col} strokeWidth={1.8} />
+            <text x={18} y={3} fill={col} fontFamily={mono} fontSize={10}>Re ψ</text>
+            <line x1={0} y1={10} x2={14} y2={10} stroke={ionisedCol} strokeWidth={1.8} />
+            <text x={18} y={13} fill={ionisedCol} fontFamily={mono} fontSize={10}>Im ψ</text>
+          </g>
+        </g>
+      )}
+
+      {/* Recent measurement flashes drawn at the (x, E) the measurement
+          actually returned. x comes from the sampler in Tab 2's [0, 1]
+          engine convention (the Tab 3 sim loop normalises before
+          pushing) — convert back to nm for the centred axis. y is the
+          measured energy mapped onto the panel: floor for E = 0,
+          ceiling for E = v0eV, clamped at the ceiling for ionised
+          events so they appear at the rim with the ionised colour. */}
+      {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
+        const xNm = (m.x - 0.5) * lengthNm;
+        const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
+        const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+        // Extended mode: use the shared yForE mapping (E spans the full
+        // panel, ionised events land above V₀ rather than at the rim).
+        // Legacy: fraction of v0eV clamped to [0, 1] within the well.
+        let cy;
+        if (extendedY) {
+          cy = yForE(Number.isFinite(m.E) ? m.E : 0);
+        } else {
+          const eFrac = (v0eV > 0 && Number.isFinite(m.E)) ? m.E / v0eV : 0;
+          cy = floorY - Math.max(0, Math.min(1, eFrac)) * (floorY - ceilY);
+        }
+        const isAboveV0 = Number.isFinite(m.E) && v0eV > 0 && m.E > v0eV;
+        const fillColour = isAboveV0 ? ionisedCol : col;
+        return <circle key={i} cx={xToPx(xNm)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
+      })}
+
+      {isIonised && (
+        <g>
+          <line x1={W / 2} y1={ceilY - 2} x2={W / 2} y2={8}
+                stroke={ionisedCol} strokeWidth={2} strokeDasharray="2 3" opacity={0.75} />
+          <polygon points={`${W / 2 - 5},10 ${W / 2 + 5},10 ${W / 2},2`} fill={ionisedCol} />
+          <text x={W / 2 + 18} y={14}
+                fill={ionisedCol} fontFamily={mono} fontSize={11}>
+            ionised — continuum state (not drawn)
+          </text>
+        </g>
+      )}
+
+      {/* showTheory marker: silence-the-unused-prop until step 4c lights
+          up the overlay path. On Tab 3 the "theory" curve IS the FD
+          curve for non-square shapes (form is FD, values are FD; same
+          status as the analytical finite-square overlay in Tabs 1–2). */}
+      {showTheory ? null : null}
     </svg>
   );
 }
@@ -2890,9 +4497,45 @@ function PositionHistogram({
   // nm [0, lengthNm] and the visible axis covers [xMinNm, xMaxNm].
   // Tab 1 omits these and uses the default engine-units rendering.
   lengthNm, xMinNm, xMaxNm,
+  // Tab 3 puts the well at [-L/2, +L/2] instead of [0, L]; setting
+  // centredX shifts the tick labels and the ⟨x⟩ readout by L/2 so a
+  // sample at the wall reads "0.5 nm" instead of "1.0 nm" when L = 1.
+  // The underlying engine convention is still [0, 1] for the well —
+  // the Tab 3 sim loop normalises samples before binning, so the bar
+  // geometry and well shading are identical to Tab 2.
+  centredX = false,
+  // Optional override of the wall positions (and the shaded outside
+  // region edges). Pair of engine-x values in [0, 1] convention. Tab 3
+  // uses this to put the walls at the classical turning points where
+  // V(x) = E_set, so the visible "wall" coincides with the boundary of
+  // the classical region for the prep energy. Tab 1/2 omit this and
+  // fall back to walls at engine 0 and 1 (the physical finite-square
+  // walls).
+  wallsEngineX,
+  // When false, hide the in-panel header overlay (⟨x⟩, P_out) and
+  // collapse the panel to a compact marginal-plot height. Tab 1 sets
+  // showStats = false because those stats live in the Summary panel
+  // of the 2 × 2 scatter-with-marginals grid; Tab 2/3 default to true
+  // so the legacy single-row layout still carries the stats inline.
+  showStats = true,
 }) {
-  const W = 480, H = 220;
-  const PAD = { l: 60, r: 60, t: 30, b: 54 };
+  // Compact form (showStats === false): trim the header band that
+  // carried ⟨x⟩ and P_out and tighten the side paddings so the bars
+  // butt up against the simulation above. Height bumped to 200 px
+  // (was 130) so the histogram has a substantial vertical extent —
+  // the P(x) y-axis pixel length more closely matches the vertical
+  // extent of the energy histogram next door (which is 240 px tall).
+  // Sim renders with overflow:visible + z-index:1 in extended mode,
+  // so wavefunction lobes that extend below the sim's floor paint on
+  // top of this histogram rather than getting clipped.
+  // Legacy form (showStats === true): unchanged H = 220 layout with
+  // header overlay and larger fonts, for Tab 2/3 callsites.
+  const compact = !showStats;
+  const W = 480;
+  const H = compact ? 200 : 220;
+  const PAD = compact
+    ? { l: 60, r: 4,  t: 4,  b: 34 }
+    : { l: 60, r: 60, t: 30, b: 54 };
   const innerW = W - PAD.l - PAD.r;
   const innerH = H - PAD.t - PAD.b;
   const nmMode = lengthNm !== undefined && xMinNm !== undefined && xMaxNm !== undefined;
@@ -2946,23 +4589,55 @@ function PositionHistogram({
   // scale on the x axis. Engine mode keeps the dimensionless labels.
   const xLabel = (v) => {
     if (nmMode) {
-      const nm = v * lengthNm;
-      return `${nm.toFixed(nm < 1 ? 2 : 1)} nm`;
+      const nm = centredX ? (v - 0.5) * lengthNm : v * lengthNm;
+      const absNm = Math.abs(nm);
+      const txt = `${nm.toFixed(absNm < 1 ? 2 : 1)} nm`;
+      return (centredX && nm > 0) ? `+${txt}` : txt;
     }
+    if (centredX) return v === 0 ? '−L/2' : v === 1 ? '+L/2' : '0';
     return v === 0 ? '0' : v === 1 ? 'L' : 'L/2';
   };
 
+  // Compact mode wraps the SVG in a position:relative div so HTML axis
+  // labels can overlay it. The SVG itself fills 100% width; HTML
+  // labels are absolutely positioned using viewBox-x-as-percentage so
+  // they line up with their tick marks even as the SVG stretches.
+  // Font sizes are then fixed pixel values, not affected by the SVG's
+  // preserveAspectRatio="none" horizontal compression.
+  const xPct = (xVB) => `${(xVB / W) * 100}%`;
+
   return (
-    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+    <div style={{
+      position: 'relative', display: 'block', width: '100%',
+      ...(compact ? { height: H } : {}),
+    }}>
+    <svg width="100%"
+         height={compact ? H : undefined}
+         preserveAspectRatio={compact ? 'none' : undefined}
+         viewBox={`0 0 ${W} ${H}`}
+         style={{ display: 'block' }}>
       {/* Outside-the-box shaded regions — the classically forbidden
           region for the bound electron. A faint tint here makes the
-          well boundary read at a glance, before the walls are drawn. */}
-      <rect x={PAD.l} y={PAD.t}
-        width={Math.max(0, xScale(0) - PAD.l)} height={innerH}
-        fill={inkDim} opacity={0.08} />
-      <rect x={xScale(L)} y={PAD.t}
-        width={Math.max(0, (PAD.l + innerW) - xScale(L))} height={innerH}
-        fill={inkDim} opacity={0.08} />
+          well boundary read at a glance, before the walls are drawn.
+          Engine x of the walls comes from wallsEngineX when provided
+          (Tab 3's energy-dependent turning points), else defaults to
+          the rigid finite-square walls at engine 0 / 1. */}
+      {(() => {
+        const leftWallEng  = wallsEngineX ? wallsEngineX[0] : 0;
+        const rightWallEng = wallsEngineX ? wallsEngineX[1] : L;
+        const leftWallPx   = xScale(leftWallEng);
+        const rightWallPx  = xScale(rightWallEng);
+        return (
+          <g>
+            <rect x={PAD.l} y={PAD.t}
+              width={Math.max(0, leftWallPx - PAD.l)} height={innerH}
+              fill={inkDim} opacity={0.08} />
+            <rect x={rightWallPx} y={PAD.t}
+              width={Math.max(0, (PAD.l + innerW) - rightWallPx)} height={innerH}
+              fill={inkDim} opacity={0.08} />
+          </g>
+        );
+      })()}
 
       {/* y-axis */}
       <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={axisY} stroke={rule} strokeWidth={1.5} />
@@ -2972,13 +4647,23 @@ function PositionHistogram({
       {bars}
 
       {/* Wall indicators drawn AFTER bars so they're not hidden by
-          near-wall bin heights. Solid, thick, full opacity — same
-          line weight as the wall lines in the particle / wavefunction
-          views above. */}
-      <line x1={xScale(0)} x2={xScale(0)} y1={PAD.t} y2={axisY}
-        stroke={ink} strokeWidth={3} opacity={0.85} />
-      <line x1={xScale(L)} x2={xScale(L)} y1={PAD.t} y2={axisY}
-        stroke={ink} strokeWidth={3} opacity={0.85} />
+          near-wall bin heights. wallsEngineX positions them at the
+          classical turning points (Tab 3); the default puts them at
+          the finite-square walls (Tab 1/2). */}
+      {(() => {
+        const leftWallEng  = wallsEngineX ? wallsEngineX[0] : 0;
+        const rightWallEng = wallsEngineX ? wallsEngineX[1] : L;
+        const onPanel = (eng) => {
+          const px = xScale(eng);
+          return px >= PAD.l && px <= PAD.l + innerW;
+        };
+        return (
+          <g>
+            {onPanel(leftWallEng)  && <line x1={xScale(leftWallEng)}  x2={xScale(leftWallEng)}  y1={PAD.t} y2={axisY} stroke={ink} strokeWidth={3} opacity={0.85} />}
+            {onPanel(rightWallEng) && <line x1={xScale(rightWallEng)} x2={xScale(rightWallEng)} y1={PAD.t} y2={axisY} stroke={ink} strokeWidth={3} opacity={0.85} />}
+          </g>
+        );
+      })()}
 
       {/* Theory overlay: time-averaged |ψ(x)|² density (quantum) or
           uniform-inside-the-well density (classical) as a continuous
@@ -3010,49 +4695,76 @@ function PositionHistogram({
           stroke={col} strokeWidth={2.5} opacity={opacity} />;
       })}
 
-      {/* tick marks and labels */}
+      {/* Minor tick marks between the labelled ticks — short, unlabelled.
+          Tab 2's well at [0, 1] engine + ±0.3 L margin gives a 1.6 L
+          visible range, so a minor tick every 0.05 engine = every 0.05 L
+          puts ten marks per L. That's the chart-style finer scale the
+          eye can use to read distances off the histogram. */}
+      {(() => {
+        const minor = [];
+        for (let i = 0; i <= 32; i++) {
+          const t = X_PLOT_MIN + i * (X_PLOT_RANGE / 32);
+          // Skip positions that coincide with major ticks.
+          const onMajor = xTicks.some((mt) => Math.abs(mt - t) < 1e-6);
+          if (onMajor) continue;
+          minor.push(t);
+        }
+        return minor.map((t, i) => (
+          <line key={`m${i}`} x1={xScale(t)} x2={xScale(t)} y1={axisY} y2={axisY + 3}
+            stroke={rule} strokeWidth={1} opacity={0.7} />
+        ));
+      })()}
+
+      {/* Major tick MARKS (lines only) — labels are HTML overlays in
+          compact mode so their fonts don't get stretched by the SVG's
+          preserveAspectRatio="none" (cell width < viewBox W = 480
+          would otherwise compress text horizontally to ~half scale). */}
       {xTicks.map((t) => (
-        <g key={t}>
-          <line x1={xScale(t)} x2={xScale(t)} y1={axisY} y2={axisY + 5} stroke={rule} strokeWidth={1.5} />
-          <text x={xScale(t)} y={axisY + 20} textAnchor="middle"
-            fill={inkDim} fontSize={16} fontFamily={mono} fontWeight={500}>
-            {xLabel(t)}
-          </text>
-        </g>
+        <line key={`tk${t}`}
+          x1={xScale(t)} x2={xScale(t)} y1={axisY} y2={axisY + 5}
+          stroke={rule} strokeWidth={1.5} />
       ))}
 
-      {/* axis titles */}
-      <text x={PAD.l - 8} y={PAD.t + 10} textAnchor="end"
-        fill={inkDim} fontSize={15} fontFamily={mono} fontWeight={500} fontStyle="italic">
-        P(x)
-      </text>
-      <text x={PAD.l + innerW / 2} y={axisY + 42} textAnchor="middle"
-        fill={inkDim} fontSize={16} fontFamily={mono} fontWeight={500} fontStyle="italic">
-        x
-      </text>
+      {/* SVG-text labels — legacy mode only. Compact mode uses HTML
+          overlays (rendered after this SVG below) so the font size
+          matches the energy histogram regardless of cell width. */}
+      {!compact && (
+        <>
+          {xTicks.map((t) => (
+            <text key={`tl${t}`}
+              x={xScale(t)} y={axisY + 20} textAnchor="middle"
+              fill={inkDim} fontSize={16} fontFamily={mono} fontWeight={500}>
+              {xLabel(t)}
+            </text>
+          ))}
+          <text x={PAD.l - 8} y={PAD.t + 10} textAnchor="end"
+            fill={inkDim} fontSize={15} fontFamily={mono}
+            fontWeight={500} fontStyle="italic">
+            P(x)
+          </text>
+          <text x={PAD.l + innerW / 2} y={axisY + 42} textAnchor="middle"
+            fill={inkDim} fontSize={16} fontFamily={mono}
+            fontWeight={500} fontStyle="italic">
+            x
+          </text>
+        </>
+      )}
 
-      {/* ⟨x⟩ overlay in the header band above the plot. In nm mode
-          this reads as an actual nm value; in engine mode it reads
-          as a fraction of L. */}
-      {meanX !== null && (
+      {/* ⟨x⟩ and P_out header-band overlays. Only rendered in the
+          legacy layout (showStats); in compact form these stats live
+          in the Summary panel adjacent to the histogram. */}
+      {showStats && meanX !== null && (
         <text x={PAD.l + innerW - 6} y={PAD.t - 8} textAnchor="end"
           fontFamily={mono} fontSize={18} fontWeight={500} fontVariantNumeric="tabular-nums">
           <tspan fill={inkDim}>⟨x⟩ = </tspan>
           {nmMode ? (
-            <tspan fill={isIonised ? ionisedCol : col}>{(meanX * lengthNm).toFixed(2)}<tspan fill={inkDim} fontSize={12}> nm</tspan></tspan>
+            <tspan fill={isIonised ? ionisedCol : col}>{((centredX ? (meanX - 0.5) : meanX) * lengthNm).toFixed(2)}<tspan fill={inkDim} fontSize={12}> nm</tspan></tspan>
           ) : (
-            <tspan fill={isIonised ? ionisedCol : col}>{meanX.toFixed(2)}<tspan fill={inkDim}>L</tspan></tspan>
+            <tspan fill={isIonised ? ionisedCol : col}>{(centredX ? (meanX - 0.5) : meanX).toFixed(2)}<tspan fill={inkDim}>L</tspan></tspan>
           )}
         </text>
       )}
-
-      {/* P_out: fraction of position measurements that fell outside the
-          box (classically forbidden region). Shown on both panels —
-          classical is 0 by construction; the contrast is the chemistry
-          point. Coloured in the panel accent (NOT the ionised pink)
-          because outside-the-box probability is a property of the
-          bound state, not an ionisation event. */}
-      {leakFrac !== undefined && (
+      {showStats && leakFrac !== undefined && (
         <text x={PAD.l + 6} y={PAD.t - 8} textAnchor="start"
           fontFamily={mono} fontSize={18} fontWeight={500} fontVariantNumeric="tabular-nums">
           <tspan fill={inkDim}>P</tspan>
@@ -3062,6 +4774,43 @@ function PositionHistogram({
         </text>
       )}
     </svg>
+    {/* HTML overlays — compact mode only. Fixed-pixel font sizes so
+        text aspect ratio doesn't get squashed by the SVG's
+        preserveAspectRatio="none". Horizontal positions are
+        percentage-of-viewBox so they track the SVG's stretched
+        bar geometry; vertical positions are pixels (SVG height
+        matches viewBox H exactly via the explicit height attr). */}
+    {compact && (
+      <>
+        {/* P(x) — y-axis title at top-left, right-aligned with the y-axis. */}
+        <div style={{
+          position: 'absolute', top: PAD.t + 1,
+          left: 0, width: xPct(PAD.l - 4),
+          textAlign: 'right',
+          fontFamily: mono, fontSize: 10, fontStyle: 'italic',
+          color: inkDim, lineHeight: 1, pointerEvents: 'none',
+        }}>P(x)</div>
+        {/* Major tick labels — centered on each tick mark x position. */}
+        {xTicks.map((t) => (
+          <div key={`hl${t}`} style={{
+            position: 'absolute', top: axisY + 7,
+            left: xPct(xScale(t)),
+            transform: 'translateX(-50%)',
+            fontFamily: mono, fontSize: 10, color: inkDim,
+            whiteSpace: 'nowrap', lineHeight: 1, pointerEvents: 'none',
+          }}>{xLabel(t)}</div>
+        ))}
+        {/* x-axis title — centered below tick labels. */}
+        <div style={{
+          position: 'absolute', top: axisY + 21,
+          left: xPct(PAD.l + innerW / 2),
+          transform: 'translateX(-50%)',
+          fontFamily: mono, fontSize: 11, fontStyle: 'italic',
+          color: inkDim, lineHeight: 1, pointerEvents: 'none',
+        }}>x</div>
+      </>
+    )}
+    </div>
   );
 }
 
@@ -3915,6 +5664,279 @@ function Tab2Notes({
   );
 }
 
+// ---------- Tab 3 Notes — shape-aware "what you're looking at" ----------
+// Mirrors Tab2Notes's three-column layout (prep / readout / chemistry).
+// Column 3 is the Tab 3-specific payload: a shape-contrast paragraph
+// that adapts to which two shapes the student has on screen.
+//
+// Shape contrast pedagogy mapping:
+//   - both finite-square  → defer to Tab 2's geometry story
+//   - both parabolic       → harmonic-oscillator ladder ℏω(n + ½),
+//                            the universal small-displacement model
+//   - both Coulomb         → Rydberg ladder converging to V₀; high-n
+//                            states look classical
+//   - parabolic vs square  → smooth bottom vs hard walls
+//   - Coulomb  vs square   → asymptotic tail vs hard walls
+//   - Coulomb  vs parabolic→ Rydberg vs HO; the parabola is the
+//                            near-bottom local approximation of any
+//                            smooth confining potential, Coulomb
+//                            included, so the lowest rungs agree.
+//
+// The Coulomb branch picks up an extra sentence on the sign-convention
+// shift (the locked decision) and on the semi-classical limit
+// (the "Coulomb high-n has small P_out" observation Pierre flagged).
+
+function shapeName(s) {
+  return s === 'finite-square' ? 'finite-square'
+       : s === 'truncated-parabolic' ? 'truncated-parabolic'
+       : s === 'softened-Coulomb' ? 'softened-Coulomb'
+       : s === 'softened-coulomb' ? 'softened-Coulomb'
+       : s || 'unknown';
+}
+
+function Tab3Notes({
+  shapeA, shapeB,
+  lengthA, lengthB, mEffA, mEffB, v0A, v0B,
+  energyA, energyB, gammaA, gammaB,
+  statesA, statesB, probsA, probsB, eStarA, eStarB,
+  isIonisedA, isIonisedB,
+  qIonisedFracA, qIonisedFracB, qLeakFracA, qLeakFracB,
+  qXCountA, qXCountB, qECountA, qECountB,
+  mono, display, body, ink, inkDim, accent, qCol, ionisedCol,
+}) {
+  void display; void body;
+  // Dominant eigenstates per side.
+  function dominant(probs, states) {
+    const dom = [];
+    for (let i = 0; i < probs.length; i++) {
+      if (probs[i] > 0.05) dom.push({ n: i + 1, E: states[i].E, p: probs[i], parity: states[i].parity });
+    }
+    return dom.sort((a, b) => b.p - a.p);
+  }
+  const domA = dominant(probsA, statesA);
+  const domB = dominant(probsB, statesB);
+  const singleA = domA.length === 1 || (domA[0] && domA[0].p > 0.85);
+  const singleB = domB.length === 1 || (domB[0] && domB[0].p > 0.85);
+  const sameN = singleA && singleB && domA[0] && domB[0] && domA[0].n === domB[0].n;
+  const sameShape = shapeA === shapeB;
+  void gammaA; void gammaB; void lengthB; void mEffB; void v0B;
+
+  // ---------- Column 1: prep ----------
+  let prepLabel, prepText, prepColour;
+  if (isIonisedA && isIonisedB) {
+    prepLabel  = 'Both systems ionised';
+    prepColour = ionisedCol;
+    prepText = (
+      <>Both preparation energies exceed their V<sub>0</sub> — neither side has
+        a bound electron. Drop at least one side's slider below its
+        V<sub>0</sub> to see the bound-state physics.</>
+    );
+  } else if (isIonisedA || isIonisedB) {
+    const ion = isIonisedA ? 'A' : 'B';
+    const bnd = isIonisedA ? 'B' : 'A';
+    prepLabel  = `${ion} ionised, ${bnd} bound`;
+    prepColour = ionisedCol;
+    prepText = (
+      <>System <strong style={{ color: ionisedCol }}>{ion}</strong> sits above
+        its V<sub>0</sub>; the electron has been ejected. System{' '}
+        <strong>{bnd}</strong> still hosts a bound state, so the histograms
+        contrast a continuum (photoionisation-style) prep on one side with
+        a bound-state collapse on the other.</>
+    );
+  } else if (sameN) {
+    prepLabel  = `Same n = ${domA[0].n} in both wells`;
+    prepColour = accent;
+    const eA = (domA[0].E * eStarA).toFixed(3);
+    const eB = (domB[0].E * eStarB).toFixed(3);
+    prepText = sameShape ? (
+      <>Both sides are prepared on <em>n</em> = {domA[0].n} of the same
+        shape, so the spectra agree exactly:
+        E<sub>{domA[0].n}</sub> = <strong>{eA} eV</strong> on both. The
+        comparison panels are doing a sanity check that two independent
+        runs of the identical system give statistically identical
+        histograms. Switch one side's shape (or any geometry knob) to
+        start a real comparison.</>
+    ) : (
+      <>Both sides are prepared on <em>n</em> = {domA[0].n}, but the two
+        shapes give different absolute energies:
+        A's E<sub>{domA[0].n}</sub> = <strong>{eA} eV</strong>,
+        B's E<sub>{domB[0].n}</sub> = <strong>{eB} eV</strong>.
+        Same quantum number, different shape — the shape sets the spacing.</>
+    );
+  } else if (singleA && singleB) {
+    prepLabel  = 'Different bound states';
+    prepColour = accent;
+    prepText = (
+      <>A is essentially in <em>n</em> = {domA[0].n} ({fmtEv(domA[0].E * eStarA)});
+        B is in <em>n</em> = {domB[0].n} ({fmtEv(domB[0].E * eStarB)}).
+        Lock the energy slider (chain icon) and click an eigenstate tick
+        to pair both sides on the same <em>n</em>.</>
+    );
+  } else {
+    prepLabel  = 'Superposition prep';
+    prepColour = accent;
+    const counts = `A: ${domA.length || 0} dominant state${domA.length === 1 ? '' : 's'}, B: ${domB.length || 0}`;
+    prepText = (
+      <>Γ broadens the Lorentzian prep so at least one side is a
+        superposition of bound states ({counts}). Each measurement still
+        collapses onto a single eigenvalue (Born rule), but the histograms
+        sum contributions from several. Narrow Γ on either side to inspect
+        a single state.</>
+    );
+  }
+
+  // ---------- Column 2: readout ----------
+  const eVgap = (sameN && !isIonisedA && !isIonisedB)
+    ? Math.abs(domA[0].E * eStarA - domB[0].E * eStarB) : null;
+  const showLeak = qXCountA > 0 && qXCountB > 0;
+  const showIon  = (qECountA > 0 || qECountB > 0) && (qIonisedFracA > 0.01 || qIonisedFracB > 0.01);
+  const measureLabel  = 'What you can read off';
+  const measureColour = qCol;
+  const measureText = (
+    <>
+      A ({shapeName(shapeA)}) has <strong>{statesA.length}</strong> bound state{statesA.length === 1 ? '' : 's'};
+      B ({shapeName(shapeB)}) has <strong>{statesB.length}</strong>.
+      {eVgap != null && (
+        <>{' '}At this prep the two reported eigenenergies differ by
+          {' '}<strong style={{ color: accent }}>{fmtEv(eVgap)}</strong>
+          {' '}— this is the same-<em>n</em> photon energy across shapes,
+          a shape-induced transition energy you can read off directly.</>
+      )}
+      {showLeak && (
+        <>{' '}Leakage past the classical turning point (P<sub>out</sub>):
+          {' '}<strong style={{ color: qCol }}>A {fmtPct(qLeakFracA)}</strong>,
+          {' '}<strong style={{ color: qCol }}>B {fmtPct(qLeakFracB)}</strong>.
+          Tab 3's walls track the classical region at the prep energy on
+          every shape, so the same percentage means the same physical
+          thing across A and B.</>
+      )}
+      {showIon && (
+        <>{' '}Ionisation (P<sub>ion</sub>):
+          {' '}A {fmtPct(qIonisedFracA)}, B {fmtPct(qIonisedFracB)}.</>
+      )}
+    </>
+  );
+
+  // ---------- Column 3: shape contrast ----------
+  let chemLabel, chemText, chemColour = qCol;
+  if (sameShape && shapeA === 'finite-square') {
+    chemLabel = 'Two finite-square wells';
+    chemText = (
+      <>Both wells are finite-square — flat-bottomed boxes with vertical
+        walls. Geometry (L, m<sup>*</sup>, V<sub>0</sub>) is the only thing
+        that can differ here. Switch one side to <em>Parabolic</em> or
+        <em> Coulomb</em> to expose how the <em>shape</em> of the bottom of
+        the well, not just its size, sets the spectrum.</>
+    );
+  } else if (sameShape && shapeA === 'truncated-parabolic') {
+    chemLabel = 'Two harmonic oscillators';
+    chemText = (
+      <>Both wells are truncated-parabolic — the universal small-displacement
+        model for any smooth confining potential, from a diatomic bond to a
+        crystal phonon. In the deep-well limit the spectrum collapses to the
+        textbook ladder
+        {' '}<em>E<sub>n</sub></em> = ℏω(<em>n</em> + ½) with
+        ω = 2√(2V<sub>0</sub>/(m<sup>*</sup>L<sup>2</sup>)). Evenly-spaced
+        rungs — vibrational spectroscopy in one sentence. The flat V<sub>0</sub>
+        ceiling truncates this at the top, so the highest rung shifts down
+        a touch from the textbook value.</>
+    );
+  } else if (sameShape && shapeA === 'softened-coulomb') {
+    chemLabel = 'Two softened-Coulomb wells';
+    chemText = (
+      <>Both wells are softened-Coulomb — the regularised hydrogen-like form,
+        V = V<sub>0</sub>(1 − 1/√(12 (x/L)² + 1)). The bound spectrum
+        converges toward V<sub>0</sub> as <em>n</em> grows (a Rydberg-style
+        series). At high <em>n</em>, the classical region widens faster than
+        the wavefunction spreads, so P<sub>out</sub> drops — the semi-classical
+        limit, where highly-excited states of smooth potentials look
+        "classical". (Sign-convention note: the textbook form
+        −A/√(x²+a²) has its floor at −A and asymptote at 0; we shift to
+        floor = 0, asymptote = V<sub>0</sub> so the ionisation threshold
+        sits at V<sub>0</sub> like every other shape.)</>
+    );
+  } else {
+    // Mixed shapes. Pick the right contrast paragraph.
+    const sa = shapeA, sb = shapeB;
+    const pair = [sa, sb].sort().join('|');
+    chemLabel = 'Shape contrast';
+    if (pair === 'finite-square|truncated-parabolic') {
+      const sq = sa === 'finite-square' ? 'A' : 'B';
+      const pa = sa === 'truncated-parabolic' ? 'A' : 'B';
+      chemText = (
+        <>
+          {sq} (finite-square) has hard vertical walls; {pa}{' '}
+          (parabolic) curves smoothly to V<sub>0</sub>. At low energy the two
+          look similar — the parabola's bottom is locally quadratic, just like
+          the square's flat interior — so the ground state is comparable. At
+          higher <em>n</em>, the parabolic well widens (the classical region
+          breathes out with energy) while the square stays pinned at ±L/2.
+          That's why the parabolic ladder is evenly spaced and the square's
+          isn't.
+        </>
+      );
+    } else if (pair === 'finite-square|softened-coulomb') {
+      const sq = sa === 'finite-square' ? 'A' : 'B';
+      const co = sa === 'softened-coulomb' ? 'A' : 'B';
+      chemText = (
+        <>
+          {sq} (finite-square) has hard walls at ±L/2; {co}{' '}
+          (Coulomb) has no walls — V approaches V<sub>0</sub> only asymptotically.
+          The square's leakage past the wall is the chemistry-textbook
+          tunneling story; the Coulomb's "leakage" is qualitatively different
+          because there's no hard wall to leak past — the classical region
+          itself breathes out with E. At high <em>n</em> the Coulomb side's
+          P<sub>out</sub> drops to near zero (the classical region has swallowed
+          the wavefunction) while the square's stays substantial.
+        </>
+      );
+    } else if (pair === 'softened-coulomb|truncated-parabolic') {
+      const pa = sa === 'truncated-parabolic' ? 'A' : 'B';
+      const co = sa === 'softened-coulomb' ? 'A' : 'B';
+      chemText = (
+        <>
+          {pa} (parabolic) gives the textbook harmonic-oscillator ladder ℏω(n + ½);
+          {co} (Coulomb) gives a converging Rydberg-style series.
+          At low <em>n</em> they look alike — the parabola is the local
+          quadratic approximation of <em>any</em> smooth bottom, Coulomb
+          included — so the ground state and first excited state energies are
+          comparable. As <em>n</em> grows, the parabola's evenly-spaced rungs
+          diverge from the Coulomb's compressing rungs: that's the difference
+          between a stiff harmonic bond and a long-range attractive interaction.
+        </>
+      );
+    } else {
+      chemText = (
+        <>A is {shapeName(sa)}, B is {shapeName(sb)}. Unusual pairing —
+          inspect the spectra above and the histogram leakage to compare.</>
+      );
+    }
+  }
+
+  const items = [
+    { label: prepLabel,    text: prepText,    colour: prepColour },
+    { label: measureLabel, text: measureText, colour: measureColour },
+    { label: chemLabel,    text: chemText,    colour: chemColour },
+  ];
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 18 }}>
+      {items.map((it, i) => (
+        <div key={i}>
+          <div style={{
+            fontFamily: mono, fontSize: 12, letterSpacing: 1.5,
+            color: it.colour, textTransform: 'uppercase', marginBottom: 6,
+          }}>
+            {it.label}
+          </div>
+          <div style={{ fontSize: 13, color: ink, lineHeight: 1.55, fontFamily: FONTS.body }}>
+            {it.text}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EnergyHistogram({ hist, recentMarkers, col, ink, inkDim, rule, mono, eSet, meanE, v0, eHistMax, ionisedCol, accent, ionisedFrac, eigenStates, theoryCurve, logY, onToggleLogY, energyUnitLabel = 'ℏ²/2mL²' }) {
   const W = 480, H = 220;
   // PAD.t leaves a header band so the P_ion and ⟨E⟩ overlays don't
@@ -4107,7 +6129,7 @@ function EnergyHistogram({ hist, recentMarkers, col, ink, inkDim, rule, mono, eS
           stroke={ionisedCol} strokeWidth={1.5} />
         <text x={xScale(v0)} y={axisY + 33} textAnchor="middle"
           fill={ionisedCol} fontSize={13} fontFamily={mono} fontWeight={500}>
-          V₀={v0}
+          V₀={Number(v0).toFixed(1).replace(/\.0$/, '')}
         </text>
       </g>
 
@@ -4166,6 +6188,304 @@ function EnergyHistogram({ hist, recentMarkers, col, ink, inkDim, rule, mono, eS
   );
 }
 
+// ---------- Vertical energy histogram (mockup, currently used only on Tab 1's QUANTUM block) ----------
+// The (x, E) measurement-flash addition makes the wavefunction view a
+// 2D scatter. A vertical energy histogram to the *right* of the
+// wavefunction view + the existing position histogram *below* it then
+// turns the panel into a scatter-with-marginals figure: y is energy
+// on both the simulation and the histogram, x is position on both the
+// simulation and the position histogram. The y-axis is shared, so the
+// V₀ line and the energy ticks on the histogram align horizontally
+// with where (x, E) flashes land in the simulation.
+//
+// Geometry: the histogram is taller than the WavefunctionView (default
+// 130) so it can show the ionised region E ∈ (V₀, eHistMax] above the
+// V₀ line. Bottom-aligned with the simulation panel so E = 0 sits at
+// the same screen y on both.
+function VerticalEnergyHistogram({
+  hist, recentMarkers, col, ink, inkDim, rule, mono,
+  eSet, meanE, v0, eHistMax, ionisedCol, accent,
+  ionisedFrac, eigenStates, theoryCurve,
+  logY, onToggleLogY,
+  energyUnitLabel = 'ℏ²/2mL²',
+}) {
+  void energyUnitLabel;
+  // Geometry matches the WavefunctionView's extended layout (H = 240,
+  // topPad = 14, bottomPad = 14) so the y-axis is pixel-for-pixel
+  // shared: E = 0 at the bottom of both panels, E = eHistMax at the
+  // top of both, V₀ line at the same y on both. The "ceiling" of the
+  // well (V₀) coincides with the V₀ marker on the histogram.
+  //
+  // Axis on the RIGHT side (away from the simulation panel on the
+  // left), bars grow leftward. Eigenstate "n=k" ticks live on the LEFT
+  // (the side adjacent to the simulation), so they sit between the
+  // sim's well rim and the bars — meaningful geometric adjacency.
+  const W = 130, H = 240;
+  // Tight inner paddings: 4 px on left/top/bottom so the bar area
+  // butts up against the simulation panel (sharing y-axis) and the
+  // position histogram below it. PAD.r stays at 34 to leave room for
+  // the 3-digit energy tick labels and the V₀ text on the *outside*
+  // edge (right side, away from the sim).
+  const PAD = { l: 4, r: 34, t: 4, b: 4 };
+  const innerW = W - PAD.l - PAD.r;
+  const innerH = H - PAD.t - PAD.b;
+
+  const dataMax = hist.reduce((a, v) => (v > a ? v : a), 0);
+  const linXMax = Math.max(dataMax, 0.005) * 1.25;
+  // Log axis spans three decades down from the max (xMin = xMax / 1000),
+  // matching the horizontal EnergyHistogram's log behaviour.
+  const logXMax = Math.max(dataMax, 0.005);
+  const logXMin = logXMax / 1000;
+  const NB = hist.length;
+
+  // Energy → y: E = 0 at the bottom, E = eHistMax at the top. Same
+  // mapping the wavefunction view should use for the (x, E) flashes
+  // once the layout is harmonised across tabs.
+  function yScale(E) {
+    return PAD.t + innerH - Math.max(0, Math.min(1, E / eHistMax)) * innerH;
+  }
+  // axisX = right-side y-axis (the "outside" edge of the panel, away
+  // from the simulation on the left). baseX = inner edge where bars
+  // start; bars extend LEFT from axisX towards baseX.
+  const axisX = PAD.l + innerW;
+  const baseX = PAD.l;
+  const v0Y   = yScale(v0);
+
+  function xScale(d) {
+    // Bars grow leftward, so a larger density = more leftward extent.
+    if (!logY) return axisX - Math.min(1, d / linXMax) * innerW;
+    if (d <= 0) return axisX;
+    const lv = Math.log10(Math.max(d, logXMin));
+    const frac = (lv - Math.log10(logXMin)) / (Math.log10(logXMax) - Math.log10(logXMin));
+    return axisX - Math.max(0, Math.min(1, frac)) * innerW;
+  }
+
+  // Bin colouring: bars whose centre energy sits above V₀ are drawn
+  // in the ionised colour, matching the continuum theory band. A bin
+  // straddling V₀ is split into a lower (bound) segment and an upper
+  // (ionised) segment so the V₀ rim stays a clean visual boundary —
+  // matters when bins are coarse and the V₀ line lands mid-bin.
+  // Caveat: a measurement above V₀ might be a true continuum event or
+  // just instrument noise on a bound state pushed past the threshold;
+  // this colouring just visualises the bin location, not the cause.
+  const bars = [];
+  hist.forEach((v, i) => {
+    if (v <= 0) return;
+    const E0 = (eHistMax * i) / NB;
+    const E1 = (eHistMax * (i + 1)) / NB;
+    const Xleft = xScale(v);                // bar's leftmost edge
+    const W = Math.max(1, axisX - Xleft);
+    if (E1 <= v0) {
+      // Entirely bound bin.
+      const Y1 = yScale(E1), Y2 = yScale(E0);
+      bars.push(
+        <rect key={`b${i}`} x={Xleft} y={Y1 + 0.5}
+              width={W} height={Math.max(1, Y2 - Y1 - 1)}
+              fill={col} opacity={0.7} />
+      );
+    } else if (E0 >= v0) {
+      // Entirely ionised bin.
+      const Y1 = yScale(E1), Y2 = yScale(E0);
+      bars.push(
+        <rect key={`i${i}`} x={Xleft} y={Y1 + 0.5}
+              width={W} height={Math.max(1, Y2 - Y1 - 1)}
+              fill={ionisedCol} opacity={0.7} />
+      );
+    } else {
+      // Straddles V₀ — split at v0Y.
+      const Y1 = yScale(E1);   // top edge (ionised side)
+      const Y2 = yScale(E0);   // bottom edge (bound side)
+      bars.push(
+        <rect key={`bs${i}`} x={Xleft} y={v0Y + 0.5}
+              width={W} height={Math.max(1, Y2 - v0Y - 1)}
+              fill={col} opacity={0.7} />
+      );
+      bars.push(
+        <rect key={`is${i}`} x={Xleft} y={Y1 + 0.5}
+              width={W} height={Math.max(1, v0Y - Y1 - 1)}
+              fill={ionisedCol} opacity={0.7} />
+      );
+    }
+  });
+
+  // Energy tick positions for the y-axis labels — quartiles of
+  // eHistMax give a clean 0 / V₀/2 / V₀ / 3V₀/2 / eHistMax look on the
+  // typical 1.4×V₀ scale. We also place the V₀ tick separately (in
+  // the ionised colour) so it's always visible.
+  const yTicks = [0, eHistMax * 0.25, eHistMax * 0.5, eHistMax * 0.75, eHistMax];
+
+  void meanE; void ionisedFrac; // moved to the summary panel
+  return (
+    <svg
+      width="100%" height={H}
+      preserveAspectRatio="none"
+      viewBox={`0 0 ${W} ${H}`}
+      style={{ display: 'block', cursor: onToggleLogY ? 'pointer' : 'default' }}
+      onClick={onToggleLogY}
+    >
+      {/* Clip the theory bands to the plot area so a peak taller than
+          the current data peak doesn't paint past the y-axis. Mirrors
+          the horizontal EnergyHistogram's #energyPlotClip. */}
+      <defs>
+        <clipPath id="vEnergyPlotClip">
+          <rect x={baseX} y={PAD.t} width={innerW} height={innerH} />
+        </clipPath>
+      </defs>
+
+      {/* The ionised band was previously drawn here as a faint pink
+          rectangle covering the region above V₀. Removed so the EH
+          background matches PH's plain panel background — the V₀
+          dashed line is enough of a divider, and the continuum
+          theory band (when shown) paints the ionised region on demand. */}
+
+      {/* y-axis baseline on the RIGHT (the "outside" edge). */}
+      <line x1={axisX} x2={axisX} y1={PAD.t} y2={PAD.t + innerH}
+            stroke={rule} strokeWidth={1.5} />
+
+      {/* y-axis tick marks + labels on the RIGHT of the axis (away
+          from the simulation on the left). Suppress any tick whose
+          label would collide with the V₀ marker label (within ~10 px
+          vertically), the P(E) axis title at the top (~12 px from
+          PAD.t), or run off the bottom of the panel. */}
+      {yTicks.map((tE, i) => {
+        const tY = yScale(tE);
+        if (Math.abs(tY - v0Y) < 10) return null;
+        if (tY < PAD.t + 12) return null;             // hits P(E) title
+        if (tY > H - PAD.b - 4) return null;          // off the bottom
+        const label = tE === 0
+          ? '0'
+          : tE < 10 ? tE.toFixed(1) : Math.round(tE).toString();
+        return (
+          <g key={i}>
+            <line x1={axisX} x2={axisX + 3} y1={tY} y2={tY}
+                  stroke={rule} strokeWidth={1} />
+            <text x={axisX + 5} y={tY + 3} textAnchor="start"
+                  fill={inkDim} fontSize={10} fontFamily={mono}>
+              {label}
+            </text>
+          </g>
+        );
+      })}
+
+      {bars}
+
+      {/* Theory overlay — two filled bands (bound + continuum) mirroring
+          the horizontal EnergyHistogram's style:
+          * bound (Gaussian-broadened Σ |c_n|² peaks under F(V₀)) — accent
+          * continuum (Lorentzian tail above V₀ convolved with σ) — ionised
+          Each band is a filled polygon (sealed to the y-axis baseX) plus
+          a stroked outline. Geometry: the line traces (x = d, y = E)
+          with bars growing leftward from axisX, so the fill closes by
+          dropping back to baseX (the inner edge where bars start) at
+          both endpoints. Clipped to the plot area so peaks taller than
+          the data peak don't spill into the top padding. */}
+      {theoryCurve && (() => {
+        // Bound band lives in [0, V₀]; continuum band in [V₀, eHistMax].
+        // The shared makeEnergyTheoryShared returns the same .E grid
+        // for both curves (it doesn't pre-filter), so each call below
+        // restricts to its own range here. Without this filter the
+        // continuum's small-but-nonzero values painted a pink streak
+        // all the way to E = 0 alongside the bound peaks.
+        function pathsFor(curve, eLo, eHi) {
+          if (!curve || curve.length === 0) return null;
+          const pts = curve
+            .filter(p => p.E >= eLo && p.E <= eHi)
+            .sort((a, b) => a.E - b.E);
+          if (!pts.length) return null;
+          const line = pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xScale(p.d).toFixed(2)},${yScale(p.E).toFixed(2)}`).join(' ');
+          const firstY = yScale(pts[0].E).toFixed(2);
+          const lastY  = yScale(pts[pts.length - 1].E).toFixed(2);
+          // Close by walking back along the y-AXIS (axisX, where density
+          // = 0) to seal the band. Equivalent to "fill below the line"
+          // on a normal histogram, just rotated 90°: the shaded region
+          // sits between the line and the density = 0 baseline, on the
+          // RIGHT of the line (toward axisX), not the left (toward
+          // baseX where the bars peak).
+          const fill = `${line} L${axisX},${lastY} L${axisX},${firstY} Z`;
+          return { line, fill };
+        }
+        const b = pathsFor(theoryCurve.bound,     0,  v0);
+        const c = pathsFor(theoryCurve.continuum, v0, eHistMax);
+        return (
+          <g clipPath="url(#vEnergyPlotClip)">
+            {b && (
+              <g>
+                <path d={b.fill} fill={col} fillOpacity={0.18} stroke="none" />
+                <path d={b.line} fill="none" stroke={col} strokeWidth={1.8} opacity={0.95} vectorEffect="non-scaling-stroke" />
+              </g>
+            )}
+            {c && (
+              <g>
+                <path d={c.fill} fill={ionisedCol} fillOpacity={0.18} stroke="none" />
+                <path d={c.line} fill="none" stroke={ionisedCol} strokeWidth={1.8} opacity={0.95} vectorEffect="non-scaling-stroke" />
+              </g>
+            )}
+          </g>
+        );
+      })()}
+
+      {/* V₀ horizontal line + label on the RIGHT (next to the energy
+          axis). The line spans the full panel width so it connects
+          visually to the V₀ rim of the simulation on its left. */}
+      <line x1={baseX} x2={axisX} y1={v0Y} y2={v0Y}
+            stroke={ionisedCol} strokeWidth={1.5} strokeDasharray="3 4" opacity={0.7} />
+      <text x={axisX + 5} y={v0Y - 3} textAnchor="start"
+            fontSize={10} fontFamily={mono} fill={ionisedCol}>V₀</text>
+
+      {/* E_set marker — a short tick on the LEFT edge of the histogram
+          (the side adjacent to the simulation). No text label in the
+          tight layout: the slider knob (immediately to the left) is
+          the visual anchor for "where the prep is set", and the dashed
+          line on the sim panel makes the E_set y unambiguous. */}
+      <line x1={baseX} x2={baseX + 6} y1={yScale(eSet)} y2={yScale(eSet)}
+            stroke={accent} strokeWidth={2} />
+
+      {/* Eigenstate ticks on the LEFT of the histogram (next to the
+          simulation). Tick marks only — the "n=k" text labels that used
+          to sit alongside have been dropped because PAD.l = 4 leaves
+          no room for them outside the bar area. State indexing reads
+          off the bound-states table in the parameter block on the left
+          of the tab; this panel just shows the spectrum's distribution. */}
+      {eigenStates && eigenStates.map((s, i) => {
+        const E = s.E;
+        if (E < 0 || E > eHistMax) return null;
+        const tY = yScale(E);
+        return (
+          <line key={i}
+                x1={baseX - 2} x2={baseX + 4} y1={tY} y2={tY}
+                stroke={col} strokeWidth={1.5} opacity={0.85} />
+        );
+      })}
+
+      {/* Recent measurement flashes — short ticks crossing the y-axis
+          on the RIGHT side, at the measured energy, fading with age. */}
+      {recentMarkers && recentMarkers.map((m, i) => {
+        const tY = yScale(m.E);
+        const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
+        return <line key={i}
+          x1={axisX - 4} x2={axisX + 4} y1={tY} y2={tY}
+          stroke={col} strokeWidth={2.5} opacity={opacity} />;
+      })}
+
+      {/* "log" indicator near the top inside the bar area when log
+          scale is active. With PAD.t = 4 there's no top margin to
+          dedicate to it. */}
+      {logY && (
+        <text x={baseX + 2} y={PAD.t + 9} fontSize={10} fontFamily={mono} fill={inkDim} opacity={0.7}>log</text>
+      )}
+
+      {/* P(E) axis label at the top of the right-side axis. No room
+          below the axis now that PAD.b = 4 — the axis title moves
+          to the top, aligned with the V₀ / tick labels along the
+          right edge. */}
+      <text x={axisX + 5} y={PAD.t + 9} textAnchor="start"
+            fontSize={11} fontFamily={mono} fontStyle="italic" fill={inkDim}>
+        P(E)
+      </text>
+    </svg>
+  );
+}
+
 // =============================================================
 // TAB BAR
 // =============================================================
@@ -4176,9 +6496,18 @@ function EnergyHistogram({ hist, recentMarkers, col, ink, inkDim, rule, mono, eS
 // variable-potential-shape work lands.
 
 const TABS = [
-  { id: 'tab1', label: 'Depth',    enabled: true  },
-  { id: 'tab2', label: 'Width',    enabled: true  },
-  { id: 'tab3', label: 'Shape',    enabled: false },
+  { id: 'tab1', label: 'Depth',    enabled: true,
+    title: 'A single finite square well — classical vs quantum side-by-side. Vary the depth V₀ and watch bound states appear / disappear, wavefunctions leak past the walls, and photoionisation kick in above V₀.' },
+  { id: 'tab2', label: 'Width',    enabled: true,
+    title: 'Two quantum systems (A and B) in real units (nm, eV, m_e). Vary the well width L (and depth, mass, particle preset) to compare two different physical systems on identical preparation conditions.' },
+  { id: 'tab3', label: 'Shape',    enabled: true,
+    title: 'Two quantum systems with variable confining potential shape: finite square / truncated parabolic / softened Coulomb. Same width L, same V₀, but the wavefunctions and spectra differ — the geometry of confinement is what changes.' },
+];
+
+const SHAPE_PRESETS = [
+  { id: 'finite-square',        label: 'Finite square'        },
+  { id: 'truncated-parabolic',  label: 'Truncated parabolic'  },
+  { id: 'softened-coulomb',     label: 'Softened Coulomb'     },
 ];
 
 function TabBar({ activeTab, onChange }) {
@@ -4211,7 +6540,7 @@ function TabBar({ activeTab, onChange }) {
               cursor: isDisabled ? 'not-allowed' : (isActive ? 'default' : 'pointer'),
               opacity: isDisabled ? 0.4 : 1,
             }}
-            title={isDisabled ? 'Coming later' : undefined}
+            title={isDisabled ? 'Coming later' : t.title}
           >
             {t.label}
           </button>
@@ -4327,7 +6656,100 @@ function WellView({ lengthNm, v0eV, eStar, nBound, col, wall, bg, ionisedCol, in
 // energy slider's eV value, the σ/Γ controls' eV values, the
 // show-theory / show-eigen toggles) come in by props too so the
 // parent stays the single source of truth for prep state.
+// Compact bound-state readout for Tab 2 / Tab 3 system panels. Three
+// columns by default (n, E_n in eV, parity); when showEigen is on a
+// fourth column with the Born |c_n|² bar + percent appears, matching
+// Tab 1's full table. Drops into a fixed grid so adjacent rows line
+// up regardless of state count, and lets the panel display the full
+// per-side spectrum at a glance — the same "tight panel" feel Tab 1
+// has where the parameter controls and the readout sit together.
+function BoundStateMiniTable({ states, eStar, probs, showEigen, mono, ink, inkDim, accent, qCol, rule }) {
+  void accent;
+  const headerStyle = { fontSize: 10, color: inkDim, letterSpacing: 0.5 };
+  const cellStyle   = { fontFamily: mono, fontSize: 12, color: ink, fontVariantNumeric: 'tabular-nums' };
+  const cols = showEigen ? '18px 60px 46px 1fr' : '18px 60px 46px';
+  return (
+    <div style={{
+      marginTop: 4, fontFamily: mono, fontSize: 12, color: inkDim,
+      fontVariantNumeric: 'tabular-nums',
+    }}>
+      <div style={{ marginBottom: 4 }}>
+        Quantum bound states (<span style={{ color: ink }}>{states.length}</span>)
+      </div>
+      {states.length === 0 ? (
+        <div style={{ fontStyle: 'italic', paddingLeft: 8, fontSize: 11 }}>
+          no bound states at this depth
+        </div>
+      ) : (
+        <>
+          <div style={{
+            display: 'grid', gridTemplateColumns: cols,
+            columnGap: 8, alignItems: 'baseline',
+            paddingLeft: 8, marginBottom: 2,
+          }}>
+            <div style={headerStyle}><i>n</i></div>
+            <div style={headerStyle}><i>E</i><sub>n</sub> (eV)</div>
+            <div style={headerStyle}>parity</div>
+            {showEigen && (
+              <div style={headerStyle} title="Born probability — fraction of the current preparation in this state">|c<sub>n</sub>|²</div>
+            )}
+          </div>
+          <div style={{
+            display: 'flex', flexDirection: 'column',
+            gap: 1, paddingLeft: 8,
+          }}>
+            {states.map((s, i) => {
+              const p = (probs && probs[i]) || 0;
+              const eEv = s.E_eV !== undefined ? s.E_eV : s.E * eStar;
+              const pct = p >= 0.001
+                ? (p * 100).toFixed(p < 0.1 ? 1 : 0) + '%'
+                : (p > 0 ? '<0.1%' : '—');
+              return (
+                <div key={i} style={{
+                  display: 'grid', gridTemplateColumns: cols,
+                  columnGap: 8, alignItems: 'center',
+                }}>
+                  <div style={cellStyle}>{i + 1}</div>
+                  <div style={cellStyle}>{eEv.toFixed(3)}</div>
+                  <div style={cellStyle}>{s.parity}</div>
+                  {showEigen && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div style={{
+                        flex: 1, height: 4, background: rule,
+                        borderRadius: 2, overflow: 'hidden', minWidth: 24,
+                      }}>
+                        <div style={{
+                          width: Math.max(0, Math.min(100, p * 100)) + '%',
+                          height: '100%', background: qCol,
+                          transition: 'width 0.15s',
+                        }} />
+                      </div>
+                      <div style={{
+                        width: 38, textAlign: 'right', fontSize: 10,
+                        color: p >= 0.01 ? ink : inkDim,
+                      }}>
+                        {pct}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Tab2SystemPanel({
+  // section: 'params' renders just the header + parameter rows + paired
+  // sliders. 'sim' renders the scatter-with-marginals 2 × 2 grid
+  // (WavefunctionView + VerticalEnergyHistogram + compact PositionHistogram +
+  // Summary panel). Tab2Content renders the panel twice per system —
+  // params row first, then transport bar, then sim row — so the controls
+  // sit between the two surfaces and stay reachable when scrolled.
+  section = 'params',
   label,
   lengthVal, setLengthVal,
   mEffVal,   setMEffVal,
@@ -4388,33 +6810,178 @@ function Tab2SystemPanel({
   const [particleMenuOpen, setParticleMenuOpen] = useState(false);
   const currentPresetId = matchPreset(mEffVal);
 
+  // ====================================================================
+  // SIM SECTION — scatter-with-marginals 2 × 2 grid mirroring Tab 1's
+  // Quantum panel: WavefunctionView (top-left), VerticalEnergyHistogram
+  // (top-right, sharing the y-axis), compact PositionHistogram (bottom-
+  // left, sharing the x-axis), Summary panel (bottom-right). Same
+  // anchors / overflow / tooltips as Tab 1.
+  // ====================================================================
+  if (section === 'sim') {
+    return (
+      <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <PanelHeader tag={`System ${label}`} color={COL.accent}
+            title="One side of the A↔B comparison. Width L (nm), effective mass m*, depth V₀ (eV), and preparation knobs are set above; this panel shows the resulting wavefunction and where measurements land." />
+          <SegmentedToggle
+            value={psiMode}
+            onChange={setPsiMode}
+            options={[
+              { value: 'density',      label: '|ψ|²' },
+              { value: 'wavefunction', label: 'ψ' },
+              { value: 'off',          label: 'Off' },
+            ]}
+            accent={COL.quantum}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+          <WavefunctionView
+            states={states}
+            probs={probs}
+            t={tCurrent}
+            isIonised={isIonised}
+            psiMode={psiMode}
+            latestX={qXLatest}
+            recentMeasurements={qRecentX}
+            col={COL.quantum}
+            wall={COL.ink}
+            bg={COL.panel}
+            ionisedCol={COL.ionised}
+            mono={FONTS.mono}
+            lengthNm={lengthVal}
+            xMinNm={xMinNm}
+            xMaxNm={xMaxNm}
+            v0={v0Val}
+            eHistMax={eHistMaxEv}
+            eSet={energyVal}
+            showEigenStates={showEigen ? eigenStatesEv : null}
+            compactNLabels={true}
+          />
+          <VerticalEnergyHistogram
+            hist={qEHistDensity}
+            recentMarkers={qRecentE}
+            col={COL.quantum}
+            ink={COL.ink}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+            eSet={energyVal}
+            meanE={qeMean}
+            v0={v0Val}
+            eHistMax={eHistMaxEv}
+            ionisedCol={COL.ionised}
+            accent={COL.accent}
+            ionisedFrac={qIonisedFrac}
+            eigenStates={showEigen ? eigenStatesEv : null}
+            theoryCurve={showTheory ? qEnergyTheory : null}
+            logY={logEnergy}
+            onToggleLogY={() => setLogEnergy((v) => !v)}
+            energyUnitLabel="eV"
+          />
+          <PositionHistogram
+            hist={qXHistDensity}
+            recentMarkers={qRecentX}
+            col={COL.quantum}
+            ink={COL.ink}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+            meanX={qxMean}
+            isIonised={isIonised}
+            ionisedCol={COL.ionised}
+            leakFrac={qLeakFrac}
+            overlay={showTheory ? qPosTheory : null}
+            lengthNm={lengthVal}
+            xMinNm={xMinNm}
+            xMaxNm={xMaxNm}
+            showStats={false}
+            centredX={true}
+          />
+          {/* Summary block — two-column table, centered below the EH.
+              Row order matches Tab 1 and is fixed across A and B so each
+              parameter sits on the same line on both system panels. */}
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '4px 0 4px 0',
+          }}>
+            <div style={{
+              fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
+              lineHeight: 1.45,
+              display: 'grid',
+              gridTemplateColumns: 'auto auto',
+              columnGap: 6, rowGap: 2,
+            }}>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Number of bound states this well supports at the current V₀, m*, L. Deeper, narrower, lighter-particle wells host more bound states.">bound:</div>
+              <div style={{ textAlign: 'left', color: COL.ink, fontVariantNumeric: 'tabular-nums' }}>{states.length}</div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Sample mean of measured position in nm, centred at the well midpoint. Symmetric superpositions give ⟨x⟩ ≈ 0 nm; asymmetric prep shifts it.">⟨x⟩:</div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {qxMean !== null ? `${((qxMean - 0.5) * lengthVal).toFixed(2)} nm` : '—'}
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Sample mean of measured energy (eV). Converges to Σ |c_n|² E_n plus the continuum tail; close to but not exactly E_set when Γ > 0.">⟨E⟩:</div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {qeMean !== null ? `${qeMean.toFixed(2)}` : '—'}
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Fraction of position measurements that fell outside the well. Nonzero because the wavefunction has exponentially decaying tails past the walls (the precondition for tunnelling).">
+                P<span style={{ fontSize: 9 }}>out</span>:
+              </div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {(qLeakFrac * 100).toFixed(qLeakFrac >= 0.01 ? 0 : 1)}%
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Fraction of energy measurements above V₀ (ionised events). Nonzero when the prep Lorentzian's tail extends past V₀.">
+                P<span style={{ fontSize: 9 }}>ion</span>:
+              </div>
+              <div style={{ textAlign: 'left',
+                            color: qIonisedFrac > 0.01 ? COL.ionised : COL.inkDim,
+                            fontVariantNumeric: 'tabular-nums' }}>
+                {(qIonisedFrac * 100).toFixed(qIonisedFrac >= 0.01 ? 0 : 1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ====================================================================
+  // PARAMS SECTION — header + parameter rows + paired V₀/E sliders.
+  // ====================================================================
   return (
     <section style={{ ...panelStyle(), display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginBottom: 2 }}>
-        <PanelHeader tag={`System ${label}`} color={COL.accent} />
+        <PanelHeader tag={`System ${label}`} color={COL.accent}
+          title="One side of the A↔B comparison. Set width, mass, depth, and preparation knobs here; the simulation panel below shares the same colour and label." />
         <div style={{
           fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
           fontVariantNumeric: 'tabular-nums', display: 'flex', gap: 10, flexWrap: 'wrap',
         }}>
-          <span>E<sup>*</sup>=<span style={{ color: COL.ink }}>{eStar < 0.001 ? eStar.toExponential(2) : eStar.toFixed(4)}</span></span>
-          <span><i>V</i><sub>0</sub>/E<sup>*</sup>=<span style={{ color: COL.ink }}>{V0Internal.toFixed(1)}</span></span>
-          <span>bound:<span style={{ color: COL.ink }}>{' '}{states.length}</span></span>
+          <span title="Energy unit ℏ²/(2mL²) in eV — the natural scale on this well. Engine values internally use multiples of this.">E<sup>*</sup>=<span style={{ color: COL.ink }}>{eStar < 0.001 ? eStar.toExponential(2) : eStar.toFixed(4)}</span></span>
+          <span title="Dimensionless well depth: V₀ / E*. Drives the bound-state count.">
+            <i>V</i><sub>0</sub>/E<sup>*</sup>=<span style={{ color: COL.ink }}>{V0Internal.toFixed(1)}</span></span>
+          <span title="Number of bound states at the current V₀, m*, L.">bound:<span style={{ color: COL.ink }}>{' '}{states.length}</span></span>
         </div>
       </div>
 
-      {/* Controls row: 5 parameter sliders on the left, compact
-          vertical energy slider on the right, with a 1-px vertical
-          rule between them so the energy column reads as a distinct
-          control region rather than blending into the well-parameter
-          stack. `alignItems: stretch` gives the controls column the
-          slider's full height; inside, `justify-content: space-between`
-          distributes the 5 rows so the first lines up with the slider's
-          "Energy" label and the last with the value + link toggle. */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minWidth: 0 }}>
+      {/* Controls row: 5 parameter sliders on the left, vertical energy
+          slider on the right, 1-px rule between them. The bound-state
+          mini-table sits below the steppers in the SAME left column —
+          same pattern as Tab 1 — so the parameter block stays tight
+          and the energy slider stretches to match the column height.
+          `alignItems: stretch` keeps the two columns aligned. */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
       {/* L stepper */}
-      <div style={rowStyle} title="Width of this well in nanometres.">
+      <div style={rowStyle} title="Width L (nm) — physical box width. Narrower wells push eigenvalues up (E_n ∝ 1/L² in the deep-well limit) and reduce the number of bound states.">
         <div style={labelStyle}>Width <i>L</i></div>
         <div />
         <Stepper
@@ -4433,15 +7000,12 @@ function Tab2SystemPanel({
         <div style={{ position: 'relative' }}>
           <button
             onClick={() => setParticleMenuOpen((o) => !o)}
-            title="Click to choose a particle preset"
+            title="Effective mass in units of the bare electron mass. Click to choose a preset (electron / GaAs-like / muon / proton / α). Heavier particles compress the eigenvalue ladder and push leakage tails down."
             style={{
               ...labelStyle,
               background: 'transparent', border: 'none', padding: 0,
               cursor: 'pointer', textAlign: 'left',
               display: 'inline-flex', alignItems: 'baseline', gap: 3,
-              textDecoration: 'underline dotted',
-              textDecorationColor: COL.inkDim,
-              textUnderlineOffset: 2,
             }}
           >
             <span>m<sup>*</sup>/m<sub>e</sub></span>
@@ -4507,23 +7071,16 @@ function Tab2SystemPanel({
         <LinkToggle linked={linkedMEff} onToggle={toggleLinkedMEff} {...linkProps} />
       </div>
 
-      {/* V0 stepper */}
-      <div style={rowStyle} title="Well depth in eV.">
-        <div style={labelStyle}>Depth <i>V</i><sub>0</sub></div>
-        <div />
-        <Stepper
-          value={v0Val} onChange={setV0Val}
-          min={V0_MIN_EV} max={V0_MAX_EV} step={V0_STEP_EV} decimals={1}
-          color={COL.ionised} rule={COL.rule} mono={FONTS.mono}
-          valueWidth={valueWidth}
-        />
-        <LinkToggle linked={linkedV0} onToggle={toggleLinkedV0} {...linkProps} />
-      </div>
+      {/* V₀ moved out of the stepper stack — it now lives as a vertical
+          slider paired with Energy in the right column, so the V₀↔E
+          relationship reads geometrically. Tab 1 introduces this
+          pattern with labels; here on Tab 2 we use the same shape
+          but slimmer. */}
 
       {/* Γ stepper — preparation Lorentzian width in eV. Short label
           keeps the row in line; the tooltip carries the longer
           explanation. */}
-      <div style={rowStyle} title="Γ — preparation Lorentzian width in eV. Γ = 0 picks a single eigenstate; wider Γ blends several.">
+      <div style={rowStyle} title="Γ — FWHM of the Lorentzian that weights eigenstates around E_set when preparing the superposition (eV). Γ = 0 picks a single eigenstate (pure state); wider Γ blends neighbours (broadband prep). Physically, larger Γ ↔ shorter-lifetime / less-monochromatic source.">
         <div style={labelStyle}>Γ <span style={{ color: COL.inkDim, fontSize: 11 }}>(prep)</span></div>
         <div />
         <Stepper
@@ -4536,7 +7093,7 @@ function Tab2SystemPanel({
       </div>
 
       {/* σ stepper — instrument-resolution Gaussian σ in eV. */}
-      <div style={rowStyle} title="σ — instrument-resolution Gaussian σ in eV. Each energy measurement is broadened by this much.">
+      <div style={rowStyle} title="σ — Gaussian noise added to each energy measurement (eV). Models a real instrument's finite resolution: σ = 0 reads E_n exactly; larger σ broadens each histogram peak. Independent of Γ — Γ shapes the prep, σ shapes the readout.">
         <div style={labelStyle}>σ <span style={{ color: COL.inkDim, fontSize: 11 }}>(res)</span></div>
         <div />
         <Stepper
@@ -4548,26 +7105,70 @@ function Tab2SystemPanel({
         <LinkToggle linked={linkedSigma} onToggle={toggleLinkedSigma} {...linkProps} />
       </div>
 
+        </div>{/* end inner stepper stack */}
+
+        {/* Quantum bound states — sits in the left column under the
+            steppers, the same place Tab 1 puts its full table. flex:1
+            lets it fill any remaining vertical space so the slider
+            column doesn't grow taller than this side. */}
+        <div style={{ marginTop: 10, flex: 1 }}>
+          <BoundStateMiniTable
+            states={states}
+            eStar={eStar}
+            probs={probs}
+            showEigen={showEigen}
+            mono={FONTS.mono}
+            ink={COL.ink} inkDim={COL.inkDim}
+            accent={COL.accent} qCol={COL.quantum}
+            rule={COL.rule}
+          />
+        </div>
+
         </div>{/* end controls column */}
 
         {/* Vertical rule separating the well-parameter controls from
             the energy region — small visual cue that the energy slider
             is a different kind of control (sets the preparation, not
             the box). */}
-        <div style={{ width: 1, background: COL.ruleHi, alignSelf: 'stretch', marginLeft: 10 }} />
+        <div style={{ width: 1, background: COL.ruleHi, alignSelf: 'stretch', marginLeft: 6 }} />
 
-        {/* Vertical energy slider. Slider max = this system's V₀ (no
-            continuum region) so the student can only select bound
-            energies; the V₀ label naturally lives at the top of the
-            track because v0 == max. Energy link toggle sits inline
-            with the value display rather than dangling below. */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        {/* Paired V₀ + Energy vertical sliders. Same y-axis [0, V0_MAX]
+            on both, so the V₀ knob's vertical position coincides with
+            the V₀ marker on the Energy slider. Slimmer than Tab 1's
+            teaching layout: V₀ slider uses a narrow width (no
+            eigenstate-label space needed) and compact value + tiny
+            link toggle so two sliders fit beside the parameter stack. */}
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 0 }}>
           <VerticalSlider
-            label="Energy"
+            label="V₀"
+            value={v0Val}
+            onChange={(v) => setV0Val(Math.max(V0_MIN_EV, Math.min(V0_MAX_EV, Math.round(v * 10) / 10)))}
+            min={0}
+            max={V0_MAX_EV}
+            accent={COL.ionised}
+            ionisedAccent={COL.ionised}
+            rule={COL.rule}
+            inkDim={COL.inkDim}
+            ink={COL.ink}
+            mono={FONTS.mono}
+            v0={null}
+            decimals={1}
+            ticks={null}
+            trackHeight={170}
+            v0LabelSide="left"
+            width={42}
+            compactValue={true}
+            title="V₀ — depth of this well in eV. Sets the ceiling above which the particle is unbound. The link toggle pairs V₀ across A and B."
+            valueAddon={
+              <LinkToggle linked={linkedV0} onToggle={toggleLinkedV0} accent={COL.accent} inkDim={COL.inkDim} compact={true} />
+            }
+          />
+          <VerticalSlider
+            label="E"
             value={energyVal}
             onChange={setEnergyVal}
             min={0}
-            max={v0Val}
+            max={V0_MAX_EV}
             accent={COL.accent}
             ionisedAccent={COL.ionised}
             rule={COL.rule}
@@ -4579,90 +7180,477 @@ function Tab2SystemPanel({
             ticks={showEigen ? eigenStatesEv.map((s) => s.E) : null}
             onTickClick={showEigen ? (E, i) => setEnergyByIndex(i) : null}
             tickAccent={COL.quantum}
-            trackHeight={140}
+            trackHeight={170}
             activeTickTolerance={0.005}
             v0LabelSide="right"
+            compactValue={true}
+            width={60}
+            compactNLabels={true}
+            title="E_set — the energy you're preparing this system at (eV). Combined with Γ this picks a Lorentzian-weighted superposition. Drag past V₀ to prepare an ionised state. With Show eigenstates on, eigenstate-linked mode pairs A and B by quantum number n rather than absolute energy."
             valueAddon={
-              <LinkToggle linked={linkedEnergy} onToggle={toggleLinkedEnergy} accent={COL.accent} inkDim={COL.inkDim} />
+              <LinkToggle linked={linkedEnergy} onToggle={toggleLinkedEnergy} accent={COL.accent} inkDim={COL.inkDim} compact={true} />
             }
           />
         </div>
       </div>{/* end controls + slider row */}
+    </section>
+  );
+}
 
-      {/* Sim stack at full system-panel width. */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <SegmentedToggle
-          value={psiMode}
-          onChange={setPsiMode}
-          options={[
-            { value: 'density',      label: '|ψ|²' },
-            { value: 'wavefunction', label: 'ψ' },
-            { value: 'off',          label: 'Off' },
-          ]}
-          accent={COL.quantum}
+// =============================================================
+// TAB 3 — PER-SIDE SYSTEM PANEL
+// =============================================================
+//
+// Clone of Tab2SystemPanel with three Tab 3-specific changes:
+//   - Shape picker row at the top (the headline control).
+//   - Wavefunction view goes through Tab3WavefunctionView, which traces
+//     the shape-aware V(x) outline and samples ψ from the FD grid.
+//   - Position axis runs from xMinNm (= xGrid_nm[0]) to xMaxNm (= last),
+//     centred at x = 0, with the FWHM markers at ±L/2.
+// Show-theory overlay and log-energy toggle are deferred to a later
+// chunk; the rest of Tab 2's layout (the five parameter steppers, the
+// particle preset menu, the vertical energy slider with eigenstate
+// ticks and link toggle, the energy histogram with eigen ticks) ports
+// across with only minor adjustments to the state-shape field names.
+
+function Tab3SystemPanel({
+  // section: 'params' renders header + shape picker + parameter rows +
+  // paired V₀/E sliders. 'sim' renders the scatter-with-marginals 2 × 2
+  // grid (Tab3WavefunctionView + VerticalEnergyHistogram + compact
+  // PositionHistogram + Summary). Tab3Content renders the panel twice
+  // per system so the transport bar can sit between the two surfaces.
+  section = 'params',
+  label,
+  shape, setShapeWithLink, linkedShape, toggleLinkedShape,
+  lengthVal, setLengthVal,
+  mEffVal,   setMEffVal,
+  v0Val,     setV0Val,
+  gammaVal,  setGammaVal,
+  sigmaVal,  setSigmaVal,
+  energyVal, setEnergyVal, setEnergyByIndex,
+  linkedL,      toggleLinkedL,
+  linkedMEff,   toggleLinkedMEff,
+  linkedV0,     toggleLinkedV0,
+  linkedGamma,  toggleLinkedGamma,
+  linkedSigma,  toggleLinkedSigma,
+  linkedEnergy, toggleLinkedEnergy,
+  eStar, V0Internal, states, eigenStatesEv,
+  xGrid_nm, V_eV,
+  isIonised, probs,
+  tCurrent, qXLatest, qRecentX, qRecentE,
+  qXHistDensity, qEHistDensity, qxMean, qeMean,
+  qIonisedFrac, qLeakFrac,
+  psiMode, setPsiMode,
+  eHistMaxEv, v0Max,
+  showEigen,
+  xMinNm, xMaxNm,
+  // Energy-dependent walls (classical turning points). xTurningNm goes
+  // into the wavefunction-view wall lines; wallsEngineX is the same
+  // boundary in Tab 2's [0, 1] engine convention for the histogram.
+  xTurningNm, wallsEngineX,
+  // Optional theory overlay for the position histogram (engine x in
+  // [-0.3, 1.3], density in 1/engine_x) and the energy histogram (eV,
+  // { bound, continuum } shape). Both drawn when showTheory is on.
+  qPosTheory, qEnergyTheory,
+  showTheory,
+  // Energy histogram log-y toggle (shared across A & B at the parent).
+  logEnergy, setLogEnergy,
+}) {
+  const labelMin = 78;
+  const valueWidth = 52;
+  const rowStyle = {
+    display: 'grid',
+    gridTemplateColumns: `${labelMin}px 1fr auto 24px`,
+    gap: 8, alignItems: 'center',
+  };
+  const labelStyle = {
+    fontFamily: FONTS.mono, fontSize: 12, color: COL.ink,
+    letterSpacing: 0.3, whiteSpace: 'nowrap',
+  };
+  const linkProps = { accent: COL.accent, inkDim: COL.inkDim };
+  const sigmaGammaMax = Math.max(0.5, v0Max / 4);
+
+  const [particleMenuOpen, setParticleMenuOpen] = useState(false);
+  const currentPresetId = matchPreset(mEffVal);
+
+  // ====================================================================
+  // SIM SECTION — scatter-with-marginals 2 × 2 grid.
+  // Tab3WavefunctionView is the shape-aware view (FD-grid sampled ψ,
+  // V(x) traced as a polyline). Otherwise the same recipe as Tab 1 and
+  // Tab 2 sim sections: vertical EH right, compact PH below, Summary
+  // bottom-right.
+  // ====================================================================
+  if (section === 'sim') {
+    return (
+      <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+          <PanelHeader tag={`System ${label}`} color={COL.accent}
+            title="One side of the A↔B comparison. The shape, width, mass, depth, and prep are set above; this panel shows the resulting wavefunction on the chosen confining-potential shape." />
+          <SegmentedToggle
+            value={psiMode}
+            onChange={setPsiMode}
+            options={[
+              { value: 'density',      label: '|ψ|²' },
+              { value: 'wavefunction', label: 'ψ' },
+              { value: 'off',          label: 'Off' },
+            ]}
+            accent={COL.quantum}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+          />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+          <Tab3WavefunctionView
+            states={states}
+            probs={probs}
+            t={tCurrent}
+            isIonised={isIonised}
+            psiMode={psiMode}
+            xGrid_nm={xGrid_nm}
+            V_eV={V_eV}
+            v0eV={v0Val}
+            lengthNm={lengthVal}
+            col={COL.quantum}
+            wall={COL.ink}
+            bg={COL.panel}
+            ionisedCol={COL.ionised}
+            mono={FONTS.mono}
+            showTheory={false}
+            recentMeasurements={qRecentX}
+            xTurningNm={xTurningNm}
+            xMinNm={xMinNm} xMaxNm={xMaxNm}
+            eHistMax={eHistMaxEv}
+            eSet={energyVal}
+            showEigenStates={showEigen ? eigenStatesEv : null}
+            compactNLabels={true}
+          />
+          <VerticalEnergyHistogram
+            hist={qEHistDensity}
+            recentMarkers={qRecentE}
+            col={COL.quantum}
+            ink={COL.ink}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+            eSet={energyVal}
+            meanE={qeMean}
+            v0={v0Val}
+            eHistMax={eHistMaxEv}
+            ionisedCol={COL.ionised}
+            accent={COL.accent}
+            ionisedFrac={qIonisedFrac}
+            eigenStates={showEigen ? eigenStatesEv : null}
+            theoryCurve={showTheory ? qEnergyTheory : null}
+            logY={!!logEnergy}
+            onToggleLogY={setLogEnergy ? () => setLogEnergy((v) => !v) : undefined}
+            energyUnitLabel="eV"
+          />
+          <PositionHistogram
+            hist={qXHistDensity}
+            recentMarkers={qRecentX}
+            col={COL.quantum}
+            ink={COL.ink}
+            inkDim={COL.inkDim}
+            rule={COL.rule}
+            mono={FONTS.mono}
+            meanX={qxMean}
+            isIonised={isIonised}
+            ionisedCol={COL.ionised}
+            leakFrac={qLeakFrac}
+            overlay={showTheory ? qPosTheory : null}
+            lengthNm={lengthVal}
+            xMinNm={xMinNm}
+            xMaxNm={xMaxNm}
+            centredX={true}
+            wallsEngineX={wallsEngineX}
+            showStats={false}
+          />
+          {/* Summary panel — same row order as Tab 1 and Tab 2 sim
+              summaries. ⟨x⟩ in nm (centred at x = 0 for Tab 3). */}
+          <div style={{
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            padding: '4px 0 4px 0',
+          }}>
+            <div style={{
+              fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
+              lineHeight: 1.45,
+              display: 'grid',
+              gridTemplateColumns: 'auto auto',
+              columnGap: 6, rowGap: 2,
+            }}>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Number of bound states this well supports — depends on shape, depth V₀, width L, and effective mass.">bound:</div>
+              <div style={{ textAlign: 'left', color: COL.ink, fontVariantNumeric: 'tabular-nums' }}>{states.length}</div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Sample mean of measured position in nm. Tab 3 centres the well at x = 0, so symmetric wavefunctions give ⟨x⟩ ≈ 0 nm.">⟨x⟩:</div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {qxMean !== null ? `${((qxMean - 0.5) * lengthVal).toFixed(2)} nm` : '—'}
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Sample mean of measured energy in eV. Σ |c_n|² E_n plus the continuum tail.">⟨E⟩:</div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {qeMean !== null ? `${qeMean.toFixed(2)}` : '—'}
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Fraction of position measurements past the classical turning point — for parabolic and Coulomb this means past the energy-dependent wall, for finite-square it's past the fixed wall.">
+                P<span style={{ fontSize: 9 }}>out</span>:
+              </div>
+              <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
+                {(qLeakFrac * 100).toFixed(qLeakFrac >= 0.01 ? 0 : 1)}%
+              </div>
+              <div style={{ textAlign: 'right', cursor: 'help' }}
+                title="Fraction of energy measurements above V₀ (ionised events).">
+                P<span style={{ fontSize: 9 }}>ion</span>:
+              </div>
+              <div style={{ textAlign: 'left',
+                            color: qIonisedFrac > 0.01 ? COL.ionised : COL.inkDim,
+                            fontVariantNumeric: 'tabular-nums' }}>
+                {(qIonisedFrac * 100).toFixed(qIonisedFrac >= 0.01 ? 0 : 1)}%
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  // ====================================================================
+  // PARAMS SECTION — header + shape picker + parameter rows + paired
+  // V₀/E sliders.
+  // ====================================================================
+  return (
+    <section style={{ ...panelStyle(), display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 6, marginBottom: 2 }}>
+        <PanelHeader tag={`System ${label}`} color={COL.accent}
+          title="One side of the A↔B comparison. Set the confining-potential shape, width, mass, depth, and preparation knobs here; the simulation panel below shares the same colour and label." />
+        <div style={{
+          fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
+          fontVariantNumeric: 'tabular-nums', display: 'flex', gap: 10, flexWrap: 'wrap',
+        }}>
+          <span title="Energy unit ℏ²/(2mL²) in eV — the natural scale on this well.">E<sup>*</sup>=<span style={{ color: COL.ink }}>{eStar < 0.001 ? eStar.toExponential(2) : eStar.toFixed(4)}</span></span>
+          <span title="Dimensionless well depth: V₀ / E*. Drives the bound-state count.">
+            <i>V</i><sub>0</sub>/E<sup>*</sup>=<span style={{ color: COL.ink }}>{V0Internal.toFixed(1)}</span></span>
+          <span title="Number of bound states the well supports at the current shape, V₀, m*, L.">bound:<span style={{ color: COL.ink }}>{' '}{states.length}</span></span>
+        </div>
+      </div>
+
+      {/* Shape row — the headline control of Tab 3. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
+        <span style={{ ...labelStyle, color: COL.inkDim }}>Shape</span>
+        <ShapePicker
+          value={shape}
+          onChange={setShapeWithLink}
+          linked={linkedShape}
+          onToggleLinked={toggleLinkedShape}
+          accent={COL.accent}
           inkDim={COL.inkDim}
           rule={COL.rule}
           mono={FONTS.mono}
         />
       </div>
 
-      <WavefunctionView
-        states={states}
-        probs={probs}
-        t={tCurrent}
-        isIonised={isIonised}
-        psiMode={psiMode}
-        latestX={qXLatest}
-        recentMeasurements={qRecentX}
-        col={COL.quantum}
-        wall={COL.ink}
-        bg={COL.panel}
-        ionisedCol={COL.ionised}
-        mono={FONTS.mono}
-        lengthNm={lengthVal}
-        xMinNm={xMinNm}
-        xMaxNm={xMaxNm}
-      />
+      {/* Controls row: 5 parameter sliders on the left, vertical energy
+          slider on the right, 1-px rule between them. Bound-state
+          mini-table sits below the steppers in the same left column —
+          same pattern as Tab 1 (and now Tab 2). `alignItems: stretch`
+          keeps the two columns aligned. */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
 
-      <PositionHistogram
-        hist={qXHistDensity}
-        recentMarkers={qRecentX}
-        col={COL.quantum}
-        ink={COL.ink}
-        inkDim={COL.inkDim}
-        rule={COL.rule}
-        mono={FONTS.mono}
-        meanX={qxMean}
-        isIonised={isIonised}
-        ionisedCol={COL.ionised}
-        leakFrac={qLeakFrac}
-        overlay={showTheory ? qPosTheory : null}
-        lengthNm={lengthVal}
-        xMinNm={xMinNm}
-        xMaxNm={xMaxNm}
-      />
+      {/* L stepper */}
+      <div style={rowStyle} title="Width L in nanometres — defined as the FWHM at V = V₀/2 on every shape. Same L means the same width on finite-square, parabolic, and Coulomb wells; the difference between shapes is the geometry of confinement, not the box size.">
+        <div style={labelStyle}>Width <i>L</i></div>
+        <div />
+        <Stepper
+          value={lengthVal} onChange={setLengthVal}
+          min={L_MIN_NM} max={L_MAX_NM} step={L_STEP_NM} decimals={2}
+          color={COL.accent} rule={COL.rule} mono={FONTS.mono}
+          valueWidth={valueWidth}
+        />
+        <LinkToggle linked={linkedL} onToggle={toggleLinkedL} {...linkProps} />
+      </div>
 
-      <EnergyHistogram
-        hist={qEHistDensity}
-        recentMarkers={qRecentE}
-        col={COL.quantum}
-        ink={COL.ink}
-        inkDim={COL.inkDim}
-        rule={COL.rule}
-        mono={FONTS.mono}
-        eSet={energyVal}
-        meanE={qeMean}
-        v0={v0Val}
-        eHistMax={eHistMaxEv}
-        ionisedCol={COL.ionised}
-        accent={COL.accent}
-        ionisedFrac={qIonisedFrac}
-        eigenStates={showEigen ? eigenStatesEv : null}
-        theoryCurve={showTheory ? qEnergyTheory : null}
-        logY={logEnergy}
-        onToggleLogY={() => setLogEnergy((v) => !v)}
-        energyUnitLabel="eV"
-      />
+      {/* m* stepper with particle preset dropdown */}
+      <div style={rowStyle}>
+        <div style={{ position: 'relative' }}>
+          <button
+            onClick={() => setParticleMenuOpen((o) => !o)}
+            title="Effective mass in units of the bare electron mass. Click to choose a preset (electron / GaAs-like / muon / proton / α). Heavier particles compress the eigenvalue ladder and shrink leakage tails."
+            style={{
+              ...labelStyle,
+              background: 'transparent', border: 'none', padding: 0,
+              cursor: 'pointer', textAlign: 'left',
+              display: 'inline-flex', alignItems: 'baseline', gap: 3,
+            }}
+          >
+            <span>m<sup>*</sup>/m<sub>e</sub></span>
+            <span style={{ fontSize: 9, color: COL.inkDim }}>▾</span>
+          </button>
+          {particleMenuOpen && (
+            <>
+              <div
+                onClick={() => setParticleMenuOpen(false)}
+                style={{ position: 'fixed', inset: 0, zIndex: 19 }}
+              />
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, marginTop: 4,
+                background: COL.panel, border: `1px solid ${COL.rule}`,
+                borderRadius: 4, padding: 4, zIndex: 20, minWidth: 240,
+                boxShadow: '0 6px 18px rgba(0, 0, 0, 0.55)',
+                display: 'flex', flexDirection: 'column', gap: 1,
+              }}>
+                {PARTICLE_PRESETS.map((p) => {
+                  const isCurrent = currentPresetId === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => { setMEffVal(p.m); setParticleMenuOpen(false); }}
+                      style={{
+                        textAlign: 'left',
+                        background: isCurrent ? COL.rule : 'transparent',
+                        color: isCurrent ? COL.ink : COL.inkDim,
+                        border: 'none', padding: '5px 9px',
+                        fontFamily: FONTS.mono, fontSize: 12,
+                        cursor: 'pointer', borderRadius: 2,
+                      }}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+        <div />
+        <Stepper
+          value={mEffVal} onChange={setMEffVal}
+          min={M_MIN_ME} max={M_MAX_ME}
+          step={Math.pow(10, 0.1)}
+          multiplicative={true} decimals={2}
+          displayFn={(v) => (v < 100 ? v.toFixed(2) : v.toExponential(1))}
+          color={COL.accent} rule={COL.rule} mono={FONTS.mono}
+          valueWidth={valueWidth}
+        />
+        <LinkToggle linked={linkedMEff} onToggle={toggleLinkedMEff} {...linkProps} />
+      </div>
+
+      {/* V₀ lives as a vertical slider paired with Energy in the right
+          column — same compact pattern as Tab 2 (and learned from
+          Tab 1's wider teaching version). */}
+
+      {/* Γ stepper */}
+      <div style={rowStyle} title="Γ — FWHM of the Lorentzian that weights eigenstates around E_set when preparing the superposition (eV). Γ = 0 picks a single eigenstate (pure state); wider Γ blends neighbours (broadband prep).">
+        <div style={labelStyle}>Γ <span style={{ color: COL.inkDim, fontSize: 11 }}>(prep)</span></div>
+        <div />
+        <Stepper
+          value={gammaVal} onChange={setGammaVal}
+          min={0} max={sigmaGammaMax} step={0.01} decimals={2}
+          color={COL.accent} rule={COL.rule} mono={FONTS.mono}
+          valueWidth={valueWidth}
+        />
+        <LinkToggle linked={linkedGamma} onToggle={toggleLinkedGamma} {...linkProps} />
+      </div>
+
+      {/* σ stepper */}
+      <div style={rowStyle} title="σ — Gaussian noise added to each energy measurement (eV). Models a real instrument's finite resolution: σ = 0 reads E_n exactly; larger σ broadens each histogram peak. Independent of Γ.">
+        <div style={labelStyle}>σ <span style={{ color: COL.inkDim, fontSize: 11 }}>(res)</span></div>
+        <div />
+        <Stepper
+          value={sigmaVal} onChange={setSigmaVal}
+          min={0} max={sigmaGammaMax} step={0.01} decimals={2}
+          color={COL.accent} rule={COL.rule} mono={FONTS.mono}
+          valueWidth={valueWidth}
+        />
+        <LinkToggle linked={linkedSigma} onToggle={toggleLinkedSigma} {...linkProps} />
+      </div>
+
+        </div>{/* end inner stepper stack */}
+
+        {/* Quantum bound states — sits in the left column under the
+            steppers, the same place Tab 1 puts its full table. The
+            spectrum on every Tab 3 shape comes through the dispatched
+            solver, so the same readout works for finite-square,
+            parabolic, and Coulomb. */}
+        <div style={{ marginTop: 10, flex: 1 }}>
+          <BoundStateMiniTable
+            states={states}
+            eStar={eStar}
+            probs={probs}
+            showEigen={showEigen}
+            mono={FONTS.mono}
+            ink={COL.ink} inkDim={COL.inkDim}
+            accent={COL.accent} qCol={COL.quantum}
+            rule={COL.rule}
+          />
+        </div>
+
+        </div>{/* end controls column */}
+
+        <div style={{ width: 1, background: COL.ruleHi, alignSelf: 'stretch', marginLeft: 10 }} />
+
+        {/* Paired V₀ + Energy vertical sliders — same compact pattern
+            as Tab 2 (the teaching version was on Tab 1). Both share
+            y-axis [0, V0_MAX] so the V₀ knob geometrically tracks the
+            V₀ marker on the Energy slider. */}
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 2 }}>
+          <VerticalSlider
+            label="V₀"
+            value={v0Val}
+            onChange={(v) => setV0Val(Math.max(V0_MIN_EV, Math.min(V0_MAX_EV, Math.round(v * 10) / 10)))}
+            min={0}
+            max={V0_MAX_EV}
+            accent={COL.ionised}
+            ionisedAccent={COL.ionised}
+            rule={COL.rule}
+            inkDim={COL.inkDim}
+            ink={COL.ink}
+            mono={FONTS.mono}
+            v0={null}
+            decimals={1}
+            ticks={null}
+            trackHeight={170}
+            v0LabelSide="left"
+            width={42}
+            compactValue={true}
+            title="V₀ — depth of this well in eV. Sets the ceiling above which the particle is unbound. The link toggle pairs V₀ across A and B."
+            valueAddon={
+              <LinkToggle linked={linkedV0} onToggle={toggleLinkedV0} accent={COL.accent} inkDim={COL.inkDim} compact={true} />
+            }
+          />
+          <VerticalSlider
+            label="E"
+            value={energyVal}
+            onChange={setEnergyVal}
+            min={0}
+            max={V0_MAX_EV}
+            accent={COL.accent}
+            ionisedAccent={COL.ionised}
+            rule={COL.rule}
+            inkDim={COL.inkDim}
+            ink={COL.ink}
+            mono={FONTS.mono}
+            v0={v0Val}
+            decimals={2}
+            ticks={showEigen ? eigenStatesEv.map((s) => s.E) : null}
+            onTickClick={showEigen ? (E, i) => setEnergyByIndex(i) : null}
+            tickAccent={COL.quantum}
+            trackHeight={170}
+            activeTickTolerance={0.005}
+            v0LabelSide="right"
+            compactValue={true}
+            width={60}
+            compactNLabels={true}
+            title="E_set — the energy you're preparing this system at (eV). Combined with Γ this picks a Lorentzian-weighted superposition. Drag past V₀ to prepare an ionised state. With Show eigenstates on, eigenstate-linked mode pairs A and B by quantum number n rather than absolute energy."
+            valueAddon={
+              <LinkToggle linked={linkedEnergy} onToggle={toggleLinkedEnergy} accent={COL.accent} inkDim={COL.inkDim} compact={true} />
+            }
+          />
+        </div>
+      </div>{/* end controls + slider row */}
     </section>
   );
 }
@@ -5057,7 +8045,10 @@ function Tab2Content({ activeTab, onChangeTab }) {
         }
         qFlashR.current++;
         if (qFlashR.current % FLASH_EVERY_N === 0) {
-          qRecentXR.current.push({ x: xSamp, age: 0 });
+          // The position flash also carries its energy so the
+          // wavefunction view can place the dot at the (x, E) pair the
+          // measurement actually produced.
+          qRecentXR.current.push({ x: xSamp, E: eMeas_eV, age: 0 });
           if (qRecentXR.current.length > FLASH_BUFFER_MAX) qRecentXR.current.shift();
           qRecentER.current.push({ E: eMeas_eV, age: 0 });
           if (qRecentER.current.length > FLASH_BUFFER_MAX) qRecentER.current.shift();
@@ -5118,7 +8109,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
         }
       }
 
-      const ageX = (m) => ({ x: m.x, age: m.age + 1 });
+      const ageX = (m) => ({ x: m.x, E: m.E, age: m.age + 1 });
       const ageE = (m) => ({ E: m.E, age: m.age + 1 });
       const live = (m) => m.age < FLASH_AGE;
       qRecentXARef.current = qRecentXARef.current.map(ageX).filter(live);
@@ -5305,8 +8296,26 @@ function Tab2Content({ activeTab, onChangeTab }) {
       setPendingCrossImport(payload);
       return false;
     }
-    if (payload.schema !== 'finite-well-comparison-export/v1') {
-      alert(`Unsupported file: schema "${payload.schema || 'unknown'}". This tab loads "finite-well-comparison-export/v1" or "finite-well-particle-export/v1" files.`);
+    // Tab 3 file: only loadable here if BOTH sides are finite-square.
+    // Otherwise refuse with a friendly message — Tab 2's finite-square
+    // well can't substitute for a parabolic or Coulomb shape, and the
+    // locked design rules out silent substitution.
+    if (payload.schema === 'finite-well-shape-comparison-export/v1') {
+      const sa = payload.meta?.A?.shape || 'finite-square';
+      const sb = payload.meta?.B?.shape || 'finite-square';
+      if (sa !== 'finite-square' || sb !== 'finite-square') {
+        const non = [];
+        if (sa !== 'finite-square') non.push(`A is ${sa}`);
+        if (sb !== 'finite-square') non.push(`B is ${sb}`);
+        alert(`This file uses shapes only Tab 3 can display (${non.join(', ')}). Tab 2's finite-square wells can't substitute, so the load is refused.`);
+        return false;
+      }
+      // Both sides finite-square — fall through to the standard apply
+      // path. The Tab 3 schema's meta.A / meta.B fields are a superset
+      // of the Tab 2 schema's, so the rest of this function reads them
+      // unchanged.
+    } else if (payload.schema !== 'finite-well-comparison-export/v1') {
+      alert(`Unsupported file: schema "${payload.schema || 'unknown'}". This tab loads "finite-well-comparison-export/v1", "finite-well-particle-export/v1", or "finite-well-shape-comparison-export/v1" (finite-square sides only) files.`);
       return false;
     }
     const m = payload.meta || {};
@@ -5729,7 +8738,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
       )}
 
       <div style={{ maxWidth: 1120, margin: '0 auto' }}>
-        <header style={{ marginBottom: 12, display: 'flex', alignItems: 'flex-end', gap: 18, flexWrap: 'wrap' }}>
+        <header style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
           <h1 style={{
             fontFamily: FONTS.display, fontWeight: 400, fontSize: 38, margin: 0, padding: 0,
             lineHeight: 1, letterSpacing: -0.5, fontStyle: 'italic', whiteSpace: 'nowrap',
@@ -5738,13 +8747,59 @@ function Tab2Content({ activeTab, onChangeTab }) {
           </h1>
           <div style={{
             fontFamily: FONTS.mono, fontSize: 13, color: COL.inkDim, letterSpacing: 0.5,
-            lineHeight: 1.4, paddingBottom: 2,
+            lineHeight: 1.4,
           }}>
-            Quantum particle in a finite well of variable width
+            <div>Width of the well, mass of the particle</div>
+            <div>Two quantum systems, A vs B</div>
           </div>
         </header>
 
         <TabBar activeTab={activeTab} onChange={onChangeTab} />
+
+        {/* ===== Params row (A | B) — top of each system panel goes
+             here so users see the controls first. The transport bar
+             follows BELOW the params, immediately above the sim row
+             so Play/Pause/Stop stay reachable when scrolled down. ===== */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch', marginBottom: 14 }}>
+          <Tab2SystemPanel section="params"
+            label="A"
+            lengthVal={lengthA} setLengthVal={setLengthAWithLink}
+            mEffVal={mEffA}     setMEffVal={setMEffAWithLink}
+            v0Val={v0A}         setV0Val={setV0AWithLink}
+            gammaVal={gammaA}   setGammaVal={setGammaAWithLink}
+            sigmaVal={sigmaA}   setSigmaVal={setSigmaAWithLink}
+            linkedL={linkedL}         toggleLinkedL={toggleLinkedL}
+            linkedMEff={linkedMEff}   toggleLinkedMEff={toggleLinkedMEff}
+            linkedV0={linkedV0}       toggleLinkedV0={toggleLinkedV0}
+            linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
+            linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+            eStar={eStarA} V0Internal={V0IntA} states={statesA} eigenStatesEv={eigenStatesEvA}
+            isIonised={isIonisedA} probs={probsA}
+            energyVal={energyA} setEnergyVal={setEnergyAWithLink} setEnergyByIndex={setEnergyAByIndex}
+            linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
+            v0Max={v0Max}
+            showEigen={showEigen}
+          />
+          <Tab2SystemPanel section="params"
+            label="B"
+            lengthVal={lengthB} setLengthVal={setLengthBWithLink}
+            mEffVal={mEffB}     setMEffVal={setMEffBWithLink}
+            v0Val={v0B}         setV0Val={setV0BWithLink}
+            gammaVal={gammaB}   setGammaVal={setGammaBWithLink}
+            sigmaVal={sigmaB}   setSigmaVal={setSigmaBWithLink}
+            linkedL={linkedL}         toggleLinkedL={toggleLinkedL}
+            linkedMEff={linkedMEff}   toggleLinkedMEff={toggleLinkedMEff}
+            linkedV0={linkedV0}       toggleLinkedV0={toggleLinkedV0}
+            linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
+            linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+            eStar={eStarB} V0Internal={V0IntB} states={statesB} eigenStatesEv={eigenStatesEvB}
+            isIonised={isIonisedB} probs={probsB}
+            energyVal={energyB} setEnergyVal={setEnergyBWithLink} setEnergyByIndex={setEnergyBByIndex}
+            linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
+            v0Max={v0Max}
+            showEigen={showEigen}
+          />
+        </div>
 
         {/* ===== Transport bar — full width, shared across A & B. Plays
              both sims at once; Stop resets both. Show-theory / Show-
@@ -5843,6 +8898,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
               label="Show theory"
               accent={COL.quantum}
               inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+              title="Overlay analytical predictions on each system: Σ |c_n|² Gaussian peaks (bound) and a Lorentzian tail (continuum) on the energy histogram, plus the time-averaged |ψ(x)|² on the position histogram."
             />
             <CheckboxRow
               checked={showEigen}
@@ -5850,6 +8906,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
               label="Show eigenstates"
               accent={COL.quantum}
               inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+              title="Mark each bound state E_n on the energy histograms, the sim panels (as dashed guidelines), the Energy sliders (as snap ticks). Also adds the |c_n|² column to the bound-states tables. Linked-energy mode then pairs A and B by n rather than absolute E."
             />
           </div>
           <div style={{ flex: 1, textAlign: 'right' }}>
@@ -5868,22 +8925,14 @@ function Tab2Content({ activeTab, onChangeTab }) {
           </div>
         </div>
 
-        {/* ===== A | B. Each system carries its own vertical energy
-             slider inside its panel now, so the layout collapses to a
-             clean 1fr 1fr grid. ===== */}
+        {/* ===== Sim row (A | B) — scatter-with-marginals layout for
+             each system. Each panel takes its own scatter-with-marginals
+             2 × 2 grid (sim + vertical EH + compact PH + Summary). ===== */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch' }}>
-          <Tab2SystemPanel
+          <Tab2SystemPanel section="sim"
             label="A"
-            lengthVal={lengthA} setLengthVal={setLengthAWithLink}
-            mEffVal={mEffA}     setMEffVal={setMEffAWithLink}
-            v0Val={v0A}         setV0Val={setV0AWithLink}
-            gammaVal={gammaA}   setGammaVal={setGammaAWithLink}
-            sigmaVal={sigmaA}   setSigmaVal={setSigmaAWithLink}
-            linkedL={linkedL}         toggleLinkedL={toggleLinkedL}
-            linkedMEff={linkedMEff}   toggleLinkedMEff={toggleLinkedMEff}
-            linkedV0={linkedV0}       toggleLinkedV0={toggleLinkedV0}
-            linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
-            linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+            lengthVal={lengthA}
+            v0Val={v0A}
             eStar={eStarA} V0Internal={V0IntA} states={statesA} eigenStatesEv={eigenStatesEvA}
             isIonised={isIonisedA} probs={probsA}
             tCurrent={tARef.current}
@@ -5896,24 +8945,15 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
             qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA}
             psiMode={psiModeA} setPsiMode={setPsiModeA}
-            energyVal={energyA} setEnergyVal={setEnergyAWithLink} setEnergyByIndex={setEnergyAByIndex}
-            linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
-            eHistMaxEv={eHistMaxEvA} v0Max={v0Max}
+            energyVal={energyA}
+            eHistMaxEv={eHistMaxEvA}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
-          <Tab2SystemPanel
+          <Tab2SystemPanel section="sim"
             label="B"
-            lengthVal={lengthB} setLengthVal={setLengthBWithLink}
-            mEffVal={mEffB}     setMEffVal={setMEffBWithLink}
-            v0Val={v0B}         setV0Val={setV0BWithLink}
-            gammaVal={gammaB}   setGammaVal={setGammaBWithLink}
-            sigmaVal={sigmaB}   setSigmaVal={setSigmaBWithLink}
-            linkedL={linkedL}         toggleLinkedL={toggleLinkedL}
-            linkedMEff={linkedMEff}   toggleLinkedMEff={toggleLinkedMEff}
-            linkedV0={linkedV0}       toggleLinkedV0={toggleLinkedV0}
-            linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
-            linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+            lengthVal={lengthB}
+            v0Val={v0B}
             eStar={eStarB} V0Internal={V0IntB} states={statesB} eigenStatesEv={eigenStatesEvB}
             isIonised={isIonisedB} probs={probsB}
             tCurrent={tBRef.current}
@@ -5926,9 +8966,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
             qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB}
             psiMode={psiModeB} setPsiMode={setPsiModeB}
-            energyVal={energyB} setEnergyVal={setEnergyBWithLink} setEnergyByIndex={setEnergyBByIndex}
-            linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
-            eHistMaxEv={eHistMaxEvB} v0Max={v0Max}
+            energyVal={energyB}
+            eHistMaxEv={eHistMaxEvB}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
@@ -5983,6 +9022,1381 @@ function Tab2Content({ activeTab, onChangeTab }) {
 }
 
 // =============================================================
+// TAB 3 — SHAPE (state plumbing scaffold)
+// =============================================================
+//
+// State shape mirrors Tab 2 (A/B systems, per-parameter link toggles,
+// shared preparation knobs) with one addition: each side carries a
+// `shape` choice (finite-square / truncated-parabolic / softened-
+// Coulomb), and there is a corresponding link toggle so the student
+// can lock the two sides to the same shape or break the symmetry.
+//
+// Tab 3's bound spectrum is computed through the shape-agnostic
+// dispatcher `getBoundStatesTab3` rather than directly through Tab 1/2's
+// transcendental solver — for finite-square the dispatcher returns the
+// same analytical answer (verified at module load against
+// window.__validateTab3Solver), so this code path is correctness-equivalent
+// to Tab 2 for the finite-square default.
+//
+// This scaffold renders only the parameter and spectrum readout per
+// side, deliberately small. The full shape picker UI lands in the next
+// chunk (step 3) and the wavefunction / histogram visualisations
+// (including the x = 0 centring convention) land in step 4. Cross-tab
+// import, export, and Notes follow.
+
+function Tab3Content({ activeTab, onChangeTab }) {
+  // System A and B geometry + shape. Defaults mirror Tab 2 (same L = 1 nm,
+  // m = m_e, V₀ = 5 eV on both sides, all link toggles on) with both sides
+  // on finite-square so the first-run experience is the Tab 1/2 case the
+  // student already knows, and the first experiment is unlocking the
+  // shape and picking a different one on one side.
+  const [shapeA,  setShapeA]  = useSavedState('redux:tab3.A.shape',    'finite-square');
+  const [shapeB,  setShapeB]  = useSavedState('redux:tab3.B.shape',    'finite-square');
+  const [lengthA, setLengthA] = useSavedState('redux:tab3.A.lengthNm', 1.0);
+  const [mEffA,   setMEffA]   = useSavedState('redux:tab3.A.mEffMe',   1.0);
+  const [v0A,     setV0A]     = useSavedState('redux:tab3.A.v0eV',     5.0);
+  const [lengthB, setLengthB] = useSavedState('redux:tab3.B.lengthNm', 1.0);
+  const [mEffB,   setMEffB]   = useSavedState('redux:tab3.B.mEffMe',   1.0);
+  const [v0B,     setV0B]     = useSavedState('redux:tab3.B.v0eV',     5.0);
+  const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab3.maxBoundCap', 8);
+  const [pauseIncrement, setPauseIncrement] = useSavedState('redux:tab3.pauseIncrement', 10000);
+  const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:tab3.waveTimeMult',   1);
+  const [language,       setLanguage]       = useSavedState('redux:language',            'en');
+  const [randomSeed,     setRandomSeed]     = useState(0);
+  const [settingsOpen,   setSettingsOpen]   = useState(false);
+  const [saveMenuOpen,   setSaveMenuOpen]   = useState(false);
+  const [showNotes,      setShowNotes]      = useSavedState('redux:tab3.showNotes', false);
+  // log/linear toggle for the energy histograms — shared across A & B
+  // so clicking either side flips both. Click on the EH bar area in
+  // either system to toggle. Mirrors Tab 1 and Tab 2 behaviour.
+  const [logEnergy,      setLogEnergy]      = useState(false);
+  // Load-flow state: pendingCrossImport holds a Tab 1 single-system
+  // file waiting for the user to choose A or B as destination; the
+  // Tab 2 → Tab 3 case doesn't need a side prompt (it fills both).
+  const [pendingCrossImportT1, setPendingCrossImportT1] = useState(null);
+  const isLoadingRef = useRef(false);
+  const fileInputRefTab3 = useRef(null);
+
+  // Per-system real → engine conversions.
+  const { eStarEv: eStarA, V0Internal: V0IntA, eToEv: eToEvA } = useMemo(
+    () => realToInternal(lengthA, mEffA, v0A),
+    [lengthA, mEffA, v0A],
+  );
+  const { eStarEv: eStarB, V0Internal: V0IntB, eToEv: eToEvB } = useMemo(
+    () => realToInternal(lengthB, mEffB, v0B),
+    [lengthB, mEffB, v0B],
+  );
+  // Bound-state dispatch through the shape-agnostic solver. The cache
+  // in getBoundStatesTab3 absorbs continuous slider drags.
+  const resultA = useMemo(
+    () => getBoundStatesTab3({ shape: shapeA, lengthNm: lengthA, mEffMe: mEffA, v0eV: v0A, maxStates: maxBoundCap }),
+    [shapeA, lengthA, mEffA, v0A, maxBoundCap],
+  );
+  const resultB = useMemo(
+    () => getBoundStatesTab3({ shape: shapeB, lengthNm: lengthB, mEffMe: mEffB, v0eV: v0B, maxStates: maxBoundCap }),
+    [shapeB, lengthB, mEffB, v0B, maxBoundCap],
+  );
+  const statesA = resultA.states;
+  const statesB = resultB.states;
+
+  // Per-system energy histogram axis: 1.4 × V₀, matching Tab 2.
+  const v0Max        = Math.max(v0A, v0B);
+  const eHistMaxEvA  = Math.round(1.4 * v0A * 100) / 100;
+  const eHistMaxEvB  = Math.round(1.4 * v0B * 100) / 100;
+
+  // Position-axis range (nm), centred at x = 0. Margin of 0.3 × L on each
+  // side matches Tab 2's X_PLOT_MARGIN convention (0.3 L margin around a
+  // unit-width well), so the visual scale stays apples-to-apples with
+  // Tab 2.
+  // Visible x-range is SHARED across A and B (and scaled to the larger
+  // of the two wells), matching Tab 2's behaviour. With this, varying L
+  // on one side visibly changes the well's pixel width — a wider well
+  // takes more of the panel, a narrower well takes less. (Previously
+  // each side scaled its own range with its own L, so the well always
+  // took the same fraction of the panel and the L slider had no
+  // visible width effect.)
+  const X_PLOT_MARGIN_NM = 0.3;
+  const lengthMaxNm = Math.max(lengthA, lengthB);
+  const xMinNmA = -(lengthMaxNm / 2 + X_PLOT_MARGIN_NM * lengthMaxNm);
+  const xMaxNmA =  (lengthMaxNm / 2 + X_PLOT_MARGIN_NM * lengthMaxNm);
+  const xMinNmB = xMinNmA;
+  const xMaxNmB = xMaxNmA;
+
+  // Per-side energy: each side starts on its own ground state in eV.
+  const [energyA, setEnergyA] = useState(() => {
+    const E0 = statesA[0] ? eToEvA(statesA[0].E) : 0.3;
+    return Math.round(E0 * 100) / 100;
+  });
+  const [energyB, setEnergyB] = useState(() => {
+    const E0 = statesB[0] ? eToEvB(statesB[0].E) : 0.3;
+    return Math.round(E0 * 100) / 100;
+  });
+  const [sigmaA, setSigmaA] = useState(0);
+  const [sigmaB, setSigmaB] = useState(0);
+  const [gammaA, setGammaA] = useState(0);
+  const [gammaB, setGammaB] = useState(0);
+  const [running,    setRunning]    = useState(false);
+  const [showEigen,  setShowEigen]  = useState(false);
+  const [showTheory, setShowTheory] = useState(false);
+  const [psiModeA,   setPsiModeA]   = useSavedState('redux:tab3.A.psiMode', 'density');
+  const [psiModeB,   setPsiModeB]   = useSavedState('redux:tab3.B.psiMode', 'density');
+  const [, setTick] = useState(0);
+
+  // Per-parameter A↔B link state. All on by default — same well, same
+  // shape on both sides on first run.
+  const [linkedShape,  setLinkedShape]  = useSavedState('redux:tab3.linkedShape',  true);
+  const [linkedL,      setLinkedL]      = useSavedState('redux:tab3.linkedL',      true);
+  const [linkedMEff,   setLinkedMEff]   = useSavedState('redux:tab3.linkedMEff',   true);
+  const [linkedV0,     setLinkedV0]     = useSavedState('redux:tab3.linkedV0',     true);
+  const [linkedGamma,  setLinkedGamma]  = useSavedState('redux:tab3.linkedGamma',  true);
+  const [linkedSigma,  setLinkedSigma]  = useSavedState('redux:tab3.linkedSigma',  true);
+  const [linkedEnergy, setLinkedEnergy] = useSavedState('redux:tab3.linkedEnergy', true);
+
+  const setShapeAWithLink  = (v) => { setShapeA(v);  if (linkedShape) setShapeB(v); };
+  const setShapeBWithLink  = (v) => { setShapeB(v);  if (linkedShape) setShapeA(v); };
+  const setLengthAWithLink = (v) => { setLengthA(v); if (linkedL)     setLengthB(v); };
+  const setLengthBWithLink = (v) => { setLengthB(v); if (linkedL)     setLengthA(v); };
+  const setMEffAWithLink   = (v) => { setMEffA(v);   if (linkedMEff)  setMEffB(v); };
+  const setMEffBWithLink   = (v) => { setMEffB(v);   if (linkedMEff)  setMEffA(v); };
+  const setV0AWithLink     = (v) => { setV0A(v);    if (linkedV0)    setV0B(v); };
+  const setV0BWithLink     = (v) => { setV0B(v);    if (linkedV0)    setV0A(v); };
+  const setGammaAWithLink  = (v) => { setGammaA(v); if (linkedGamma) setGammaB(v); };
+  const setGammaBWithLink  = (v) => { setGammaB(v); if (linkedGamma) setGammaA(v); };
+  const setSigmaAWithLink  = (v) => { setSigmaA(v); if (linkedSigma) setSigmaB(v); };
+  const setSigmaBWithLink  = (v) => { setSigmaB(v); if (linkedSigma) setSigmaA(v); };
+  const setEnergyAWithLink = (v) => { setEnergyA(v); if (linkedEnergy) setEnergyB(v); };
+  const setEnergyBWithLink = (v) => { setEnergyB(v); if (linkedEnergy) setEnergyA(v); };
+
+  // Eigenstate-aware energy setters: clicking the n=k tick on one side
+  // snaps the linked partner to its own n=k eigenstate (different eV,
+  // same quantum number). Falls back to eV-matching if the partner
+  // doesn't have a k-th bound state.
+  const setEnergyAByIndex = (i) => {
+    if (!statesA[i]) return;
+    const evA = Math.round(statesA[i].E * eStarA * 100) / 100;
+    setEnergyA(evA);
+    if (linkedEnergy) {
+      if (statesB[i]) setEnergyB(Math.round(statesB[i].E * eStarB * 100) / 100);
+      else            setEnergyB(evA);
+    }
+  };
+  const setEnergyBByIndex = (i) => {
+    if (!statesB[i]) return;
+    const evB = Math.round(statesB[i].E * eStarB * 100) / 100;
+    setEnergyB(evB);
+    if (linkedEnergy) {
+      if (statesA[i]) setEnergyA(Math.round(statesA[i].E * eStarA * 100) / 100);
+      else            setEnergyA(evB);
+    }
+  };
+
+  function eigenstateIndexAt(energyEv, states, eStarX) {
+    for (let i = 0; i < states.length; i++) {
+      if (Math.abs(energyEv - states[i].E * eStarX) < 0.005) return i;
+    }
+    return -1;
+  }
+
+  const toggleLinkedShape  = () => { if (!linkedShape)  setShapeB(shapeA);  setLinkedShape(!linkedShape); };
+  const toggleLinkedL      = () => { if (!linkedL)      setLengthB(lengthA); setLinkedL(!linkedL); };
+  const toggleLinkedMEff   = () => { if (!linkedMEff)   setMEffB(mEffA);     setLinkedMEff(!linkedMEff); };
+  const toggleLinkedV0     = () => { if (!linkedV0)     setV0B(v0A);          setLinkedV0(!linkedV0); };
+  const toggleLinkedGamma  = () => { if (!linkedGamma)  setGammaB(gammaA);   setLinkedGamma(!linkedGamma); };
+  const toggleLinkedSigma  = () => { if (!linkedSigma)  setSigmaB(sigmaA);   setLinkedSigma(!linkedSigma); };
+  const toggleLinkedEnergy = () => {
+    if (!linkedEnergy) {
+      const idxA = eigenstateIndexAt(energyA, statesA, eStarA);
+      if (idxA >= 0 && statesB[idxA]) {
+        setEnergyB(Math.round(statesB[idxA].E * eStarB * 100) / 100);
+      } else {
+        setEnergyB(energyA);
+      }
+    }
+    setLinkedEnergy(!linkedEnergy);
+  };
+
+  const isIonisedA = energyA > v0A;
+  const isIonisedB = energyB > v0B;
+  const allIonised = isIonisedA && isIonisedB;
+
+  const gammaIntA = Math.max(GAMMA_INTERNAL_MIN, 1 + gammaA / eStarA);
+  const gammaIntB = Math.max(GAMMA_INTERNAL_MIN, 1 + gammaB / eStarB);
+
+  const probsA = useMemo(
+    () => computeProbs(energyA / eStarA, gammaIntA, statesA),
+    [energyA, eStarA, gammaIntA, statesA],
+  );
+  const probsB = useMemo(
+    () => computeProbs(energyB / eStarB, gammaIntB, statesB),
+    [energyB, eStarB, gammaIntB, statesB],
+  );
+
+  // Eigenstate ticks in eV, for the energy slider and energy histogram.
+  const eigenStatesEvA = useMemo(() => statesA.map(s => ({ ...s, E: s.E_eV })), [statesA]);
+  const eigenStatesEvB = useMemo(() => statesB.map(s => ({ ...s, E: s.E_eV })), [statesB]);
+
+  // --- Mirror refs for the rAF loop. Same per-system pattern as Tab 2,
+  // plus the FD grid (xGrid_nm) so the sampler can call densityGridTab3
+  // without going through React state every frame.
+  const pauseIncrementRef = useRef(pauseIncrement);
+  const waveTimeMultRef   = useRef(waveTimeMult);
+  useEffect(() => { pauseIncrementRef.current = pauseIncrement; }, [pauseIncrement]);
+  useEffect(() => { waveTimeMultRef.current   = waveTimeMult;   }, [waveTimeMult]);
+
+  const PRNG_ROOT_A = 0x5EEDA;
+  const PRNG_ROOT_B = 0x5EEDB;
+  const prngARef = useRef(makePRNG(PRNG_ROOT_A));
+  const prngBRef = useRef(makePRNG(PRNG_ROOT_B));
+  useEffect(() => {
+    prngARef.current = makePRNG(randomSeed === 0 ? 0 : (randomSeed ^ PRNG_ROOT_A) >>> 0);
+    prngBRef.current = makePRNG(randomSeed === 0 ? 0 : (randomSeed ^ PRNG_ROOT_B) >>> 0);
+  }, [randomSeed]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  const energyARef     = useRef(energyA);
+  const energyBRef     = useRef(energyB);
+  const sigmaARef      = useRef(sigmaA);
+  const sigmaBRef      = useRef(sigmaB);
+  const gammaARef      = useRef(gammaA);
+  const gammaBRef      = useRef(gammaB);
+  const eHistMaxEvARef = useRef(eHistMaxEvA);
+  const eHistMaxEvBRef = useRef(eHistMaxEvB);
+  const eStarARef      = useRef(eStarA);
+  const V0IntARef      = useRef(V0IntA);
+  const statesARef     = useRef(statesA);
+  const probsARef      = useRef(probsA);
+  const xGridARef      = useRef(resultA.xGrid_nm);
+  const xMinNmARef     = useRef(xMinNmA);
+  const xMaxNmARef     = useRef(xMaxNmA);
+  const lengthARef     = useRef(lengthA);
+  const eStarBRef      = useRef(eStarB);
+  const V0IntBRef      = useRef(V0IntB);
+  const statesBRef     = useRef(statesB);
+  const probsBRef      = useRef(probsB);
+  const xGridBRef      = useRef(resultB.xGrid_nm);
+  const xMinNmBRef     = useRef(xMinNmB);
+  const xMaxNmBRef     = useRef(xMaxNmB);
+  const lengthBRef     = useRef(lengthB);
+
+  useEffect(() => { energyARef.current     = energyA;     }, [energyA]);
+  useEffect(() => { energyBRef.current     = energyB;     }, [energyB]);
+  useEffect(() => { sigmaARef.current      = sigmaA;      }, [sigmaA]);
+  useEffect(() => { sigmaBRef.current      = sigmaB;      }, [sigmaB]);
+  useEffect(() => { gammaARef.current      = gammaA;      }, [gammaA]);
+  useEffect(() => { gammaBRef.current      = gammaB;      }, [gammaB]);
+  useEffect(() => { eHistMaxEvARef.current = eHistMaxEvA; }, [eHistMaxEvA]);
+  useEffect(() => { eHistMaxEvBRef.current = eHistMaxEvB; }, [eHistMaxEvB]);
+  useEffect(() => { eStarARef.current      = eStarA;      }, [eStarA]);
+  useEffect(() => { V0IntARef.current      = V0IntA;      }, [V0IntA]);
+  useEffect(() => { statesARef.current     = statesA;     }, [statesA]);
+  useEffect(() => { probsARef.current      = probsA;      }, [probsA]);
+  useEffect(() => { xGridARef.current      = resultA.xGrid_nm; }, [resultA]);
+  useEffect(() => { xMinNmARef.current     = xMinNmA;     }, [xMinNmA]);
+  useEffect(() => { xMaxNmARef.current     = xMaxNmA;     }, [xMaxNmA]);
+  useEffect(() => { lengthARef.current     = lengthA;     }, [lengthA]);
+  useEffect(() => { eStarBRef.current      = eStarB;      }, [eStarB]);
+  useEffect(() => { V0IntBRef.current      = V0IntB;      }, [V0IntB]);
+  useEffect(() => { statesBRef.current     = statesB;     }, [statesB]);
+  useEffect(() => { probsBRef.current      = probsB;      }, [probsB]);
+  useEffect(() => { xGridBRef.current      = resultB.xGrid_nm; }, [resultB]);
+  useEffect(() => { xMinNmBRef.current     = xMinNmB;     }, [xMinNmB]);
+  useEffect(() => { xMaxNmBRef.current     = xMaxNmB;     }, [xMaxNmB]);
+  useEffect(() => { lengthBRef.current     = lengthB;     }, [lengthB]);
+
+  // Per-system histograms + counters.
+  const qXHistARef         = useRef(new Float64Array(NBINS_X));
+  const qEHistARef         = useRef(new Float64Array(NBINS_E));
+  const qXSumARef          = useRef(0);
+  const qESumARef          = useRef(0);
+  const qXCountARef        = useRef(0);
+  const qECountARef        = useRef(0);
+  const qIonisedCountARef  = useRef(0);
+  const qXOutsideCountARef = useRef(0);
+  const qXLatestARef       = useRef(0);
+  const qRecentXARef       = useRef([]);
+  const qRecentEARef       = useRef([]);
+  const qFlashCounterARef  = useRef(0);
+  const tARef              = useRef(0);
+  const nextPauseARef      = useRef(PAUSE_INCREMENT);
+  const lastResetARef      = useRef(0);
+
+  const qXHistBRef         = useRef(new Float64Array(NBINS_X));
+  const qEHistBRef         = useRef(new Float64Array(NBINS_E));
+  const qXSumBRef          = useRef(0);
+  const qESumBRef          = useRef(0);
+  const qXCountBRef        = useRef(0);
+  const qECountBRef        = useRef(0);
+  const qIonisedCountBRef  = useRef(0);
+  const qXOutsideCountBRef = useRef(0);
+  const qXLatestBRef       = useRef(0);
+  const qRecentXBRef       = useRef([]);
+  const qRecentEBRef       = useRef([]);
+  const qFlashCounterBRef  = useRef(0);
+  const tBRef              = useRef(0);
+  const nextPauseBRef      = useRef(PAUSE_INCREMENT);
+  const lastResetBRef      = useRef(0);
+
+  // Per-system reset on geometry / shape change. Tab 3 adds the shape
+  // axis to the reset trigger: a different shape is a different system
+  // and the accumulated measurements no longer apply.
+  const isFirstResetARef = useRef(true);
+  useEffect(() => {
+    if (isFirstResetARef.current) { isFirstResetARef.current = false; return; }
+    if (isLoadingRef.current) return;
+    qXHistARef.current = new Float64Array(NBINS_X);
+    qEHistARef.current = new Float64Array(NBINS_E);
+    qXSumARef.current = 0; qESumARef.current = 0;
+    qXCountARef.current = 0; qECountARef.current = 0;
+    qIonisedCountARef.current = 0; qXOutsideCountARef.current = 0;
+    qRecentXARef.current = []; qRecentEARef.current = []; qFlashCounterARef.current = 0;
+    nextPauseARef.current = pauseIncrementRef.current;
+    tARef.current = 0;
+    lastResetARef.current = performance.now();
+    setRunning(false);
+    setTick((t) => t + 1);
+  }, [shapeA, lengthA, mEffA, v0A]);
+
+  const isFirstResetBRef = useRef(true);
+  useEffect(() => {
+    if (isFirstResetBRef.current) { isFirstResetBRef.current = false; return; }
+    if (isLoadingRef.current) return;
+    qXHistBRef.current = new Float64Array(NBINS_X);
+    qEHistBRef.current = new Float64Array(NBINS_E);
+    qXSumBRef.current = 0; qESumBRef.current = 0;
+    qXCountBRef.current = 0; qECountBRef.current = 0;
+    qIonisedCountBRef.current = 0; qXOutsideCountBRef.current = 0;
+    qRecentXBRef.current = []; qRecentEBRef.current = []; qFlashCounterBRef.current = 0;
+    nextPauseBRef.current = pauseIncrementRef.current;
+    tBRef.current = 0;
+    lastResetBRef.current = performance.now();
+    setRunning(false);
+    setTick((t) => t + 1);
+  }, [shapeB, lengthB, mEffB, v0B]);
+
+  useEffect(() => { if (energyA > eHistMaxEvA) setEnergyA(eHistMaxEvA); }, [eHistMaxEvA]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (energyB > eHistMaxEvB) setEnergyB(eHistMaxEvB); }, [eHistMaxEvB]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Position-bin helper for the centred Tab 3 convention.
+  function posToBinTab3(x_nm, xMinNm, xMaxNm) {
+    const frac = (x_nm - xMinNm) / (xMaxNm - xMinNm);
+    if (frac < 0 || frac >= 1) return -1;
+    return Math.min(NBINS_X - 1, Math.floor(frac * NBINS_X));
+  }
+
+  // --- Dual simulation loop ---
+  useEffect(() => {
+    if (!running || allIonised) return;
+    let rafId = 0;
+    let last = performance.now();
+
+    function stepSide(
+      eStarLoop, V0_int, statesLoop, probsLoop, rng, tLocalRef,
+      sigmaR, gammaR, energyR, eHistMaxEvR,
+      xGridR, xMinR, xMaxR, lengthR,
+      qXHist, qEHist, qXSumR, qESumR, qXCountR, qECountR,
+      qIonisedR, qXOutR, qXLatestR, qRecentXR, qRecentER, qFlashR,
+    ) {
+      const E_int = energyR.current / eStarLoop;
+      const sigma_eV = sigmaR.current;
+      const gamma_int = Math.max(GAMMA_INTERNAL_MIN, 1 + gammaR.current / eStarLoop);
+      const eHistMaxEvLoop = eHistMaxEvR.current;
+      const xMinNm = xMinR.current;
+      const xMaxNm = xMaxR.current;
+      const xGrid = xGridR.current;
+      const lengthNm = lengthR.current;
+
+      tLocalRef.current += DT * waveTimeMultRef.current;
+      const Fbound = lorentzCDF(V0_int, E_int, gamma_int);
+
+      if (rng() < Fbound && probsLoop && probsLoop.length > 0 && xGrid && xGrid.length > 0) {
+        const grid = densityGridTab3(statesLoop, probsLoop, tLocalRef.current,
+                                     xMinNm, xMaxNm, DENSITY_GRID_N, xGrid);
+        const xSamp_nm = sampleFromGrid(grid, xMinNm, xMaxNm, rng);
+        // Normalise to Tab 2's well-at-[0,1] convention so the existing
+        // PositionHistogram bar geometry (bins in [X_PLOT_MIN, X_PLOT_MAX]
+        // engine units) renders correctly. The Tab 3 panel re-labels the
+        // axis ticks and ⟨x⟩ readout via the centredX prop, but the
+        // underlying engine coords stay in Tab 2's [0, 1] convention so
+        // the binning and bar positioning code is shared.
+        const xSamp = (xSamp_nm + lengthNm / 2) / lengthNm;
+        qXLatestR.current = xSamp;
+        qXSumR.current += xSamp;
+        qXCountR.current++;
+        if (xSamp < 0 || xSamp > 1) qXOutR.current++;
+        const qxBin = posToBin(xSamp);
+        if (qxBin >= 0 && qxBin < NBINS_X) qXHist[qxBin]++;
+
+        const eIdx = sampleEnergyIdx(probsLoop, rng);
+        const eMeas_eV = statesLoop[eIdx].E * eStarLoop + sigma_eV * randnWith(rng);
+        qESumR.current += eMeas_eV;
+        qECountR.current++;
+        if (eMeas_eV >= 0 && eMeas_eV < eHistMaxEvLoop) {
+          const qeBin = Math.min(NBINS_E - 1, Math.floor(eMeas_eV / eHistMaxEvLoop * NBINS_E));
+          qEHist[qeBin]++;
+        }
+        qFlashR.current++;
+        if (qFlashR.current % FLASH_EVERY_N === 0) {
+          // The position flash also carries its energy so the
+          // wavefunction view can place the dot at the (x, E) pair the
+          // measurement actually produced.
+          qRecentXR.current.push({ x: xSamp, E: eMeas_eV, age: 0 });
+          if (qRecentXR.current.length > FLASH_BUFFER_MAX) qRecentXR.current.shift();
+          qRecentER.current.push({ E: eMeas_eV, age: 0 });
+          if (qRecentER.current.length > FLASH_BUFFER_MAX) qRecentER.current.shift();
+        }
+      } else {
+        const eMeas_int = sampleLorentzAbove(V0_int, E_int, gamma_int, rng);
+        const eMeas_eV = eMeas_int * eStarLoop + sigma_eV * randnWith(rng);
+        qESumR.current += eMeas_eV;
+        qECountR.current++;
+        qIonisedR.current++;
+        if (eMeas_eV >= 0 && eMeas_eV < eHistMaxEvLoop) {
+          const qeBin = Math.min(NBINS_E - 1, Math.floor(eMeas_eV / eHistMaxEvLoop * NBINS_E));
+          qEHist[qeBin]++;
+        }
+        qFlashR.current++;
+        if (qFlashR.current % FLASH_EVERY_N === 0) {
+          qRecentER.current.push({ E: eMeas_eV, age: 0 });
+          if (qRecentER.current.length > FLASH_BUFFER_MAX) qRecentER.current.shift();
+        }
+      }
+    }
+
+    function frame(now) {
+      const dt = Math.min(60, now - last);
+      last = now;
+      const sinceReset = Math.min(now - lastResetARef.current, now - lastResetBRef.current);
+      const steps = sinceReset > 400 ? Math.max(1, Math.floor(dt / 16)) : 0;
+      const pauseAt = pauseIncrementRef.current;
+
+      for (let s = 0; s < steps; s++) {
+        if (!isIonisedA) {
+          stepSide(
+            eStarARef.current, V0IntARef.current, statesARef.current, probsARef.current,
+            prngARef.current, tARef,
+            sigmaARef, gammaARef, energyARef, eHistMaxEvARef,
+            xGridARef, xMinNmARef, xMaxNmARef, lengthARef,
+            qXHistARef.current, qEHistARef.current, qXSumARef, qESumARef, qXCountARef, qECountARef,
+            qIonisedCountARef, qXOutsideCountARef, qXLatestARef,
+            qRecentXARef, qRecentEARef, qFlashCounterARef,
+          );
+        }
+        if (!isIonisedB) {
+          stepSide(
+            eStarBRef.current, V0IntBRef.current, statesBRef.current, probsBRef.current,
+            prngBRef.current, tBRef,
+            sigmaBRef, gammaBRef, energyBRef, eHistMaxEvBRef,
+            xGridBRef, xMinNmBRef, xMaxNmBRef, lengthBRef,
+            qXHistBRef.current, qEHistBRef.current, qXSumBRef, qESumBRef, qXCountBRef, qECountBRef,
+            qIonisedCountBRef, qXOutsideCountBRef, qXLatestBRef,
+            qRecentXBRef, qRecentEBRef, qFlashCounterBRef,
+          );
+        }
+        const hitA = qECountARef.current >= nextPauseARef.current;
+        const hitB = qECountBRef.current >= nextPauseBRef.current;
+        if (hitA || hitB) {
+          if (hitA) nextPauseARef.current += pauseAt;
+          if (hitB) nextPauseBRef.current += pauseAt;
+          setRunning(false);
+          break;
+        }
+      }
+
+      const ageX = (m) => ({ x: m.x, E: m.E, age: m.age + 1 });
+      const ageE = (m) => ({ E: m.E, age: m.age + 1 });
+      const live = (m) => m.age < FLASH_AGE;
+      qRecentXARef.current = qRecentXARef.current.map(ageX).filter(live);
+      qRecentEARef.current = qRecentEARef.current.map(ageE).filter(live);
+      qRecentXBRef.current = qRecentXBRef.current.map(ageX).filter(live);
+      qRecentEBRef.current = qRecentEBRef.current.map(ageE).filter(live);
+
+      setTick((t) => t + 1);
+      rafId = requestAnimationFrame(frame);
+    }
+
+    rafId = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(rafId);
+  }, [running, isIonisedA, isIonisedB, allIonised]);
+
+  function handlePlay()  { if (!allIonised) setRunning(true); }
+  function handlePause() { setRunning(false); }
+  function handleStop()  {
+    qXHistARef.current = new Float64Array(NBINS_X);
+    qEHistARef.current = new Float64Array(NBINS_E);
+    qXSumARef.current = 0; qESumARef.current = 0;
+    qXCountARef.current = 0; qECountARef.current = 0;
+    qIonisedCountARef.current = 0; qXOutsideCountARef.current = 0;
+    qRecentXARef.current = []; qRecentEARef.current = []; qFlashCounterARef.current = 0;
+    nextPauseARef.current = pauseIncrementRef.current;
+    tARef.current = 0;
+    lastResetARef.current = performance.now();
+
+    qXHistBRef.current = new Float64Array(NBINS_X);
+    qEHistBRef.current = new Float64Array(NBINS_E);
+    qXSumBRef.current = 0; qESumBRef.current = 0;
+    qXCountBRef.current = 0; qECountBRef.current = 0;
+    qIonisedCountBRef.current = 0; qXOutsideCountBRef.current = 0;
+    qRecentXBRef.current = []; qRecentEBRef.current = []; qFlashCounterBRef.current = 0;
+    nextPauseBRef.current = pauseIncrementRef.current;
+    tBRef.current = 0;
+    lastResetBRef.current = performance.now();
+
+    setRunning(false);
+    setTick((t) => t + 1);
+  }
+
+  // -------------------------------------------------------------
+  // Save (export) — schema `finite-well-shape-comparison-export/v1`
+  // -------------------------------------------------------------
+  // Schema is a superset of Tab 2's `finite-well-comparison-export/v1`
+  // — every Tab 2 field is present in the same shape, plus a `shape`
+  // field per side (and `shape` in `meta.links`). Eigenvalues carry
+  // (n, parity, e_n_ev, e_n_engine) on every shape, and additionally
+  // (k, kappa) on the finite-square branch (the analytical solver
+  // returns them; the FD branches don't have a single k or kappa).
+  // The position-histogram bin centres are in the same engine units
+  // (X_PLOT_MIN..X_PLOT_MAX) as Tab 2 — the Tab 3 sim loop normalises
+  // before binning so the storage format is shared, which is what
+  // lets Tab 2 load a finite-square-only Tab 3 file unchanged.
+
+  function buildSnapshotTab3() {
+    function sideMeta(shapeV, lengthV, mEffV, v0V, gammaV, sigmaV, energyV,
+                      eStarV, V0IntV, eHistMaxV,
+                      qXCountR, qECountR, qIonisedR, qXOutR,
+                      qXSumR, qESumR) {
+      const qXc = qXCountR.current;
+      const qEc = qECountR.current;
+      return {
+        shape: shapeV,
+        length_nm: lengthV, m_eff_me: mEffV, v0_ev: v0V,
+        gamma_ev: gammaV, sigma_ev: sigmaV, energy_ev: energyV,
+        e_star_ev: eStarV, v0_internal: V0IntV, e_hist_max_ev: eHistMaxV,
+        position_measurements: qXc,
+        energy_measurements: qEc,
+        ionisation_events: qIonisedR.current,
+        outside_box_events: qXOutR.current,
+        mean_x_engine: qXc > 0 ? qXSumR.current / qXc : null,
+        mean_e_ev:     qEc > 0 ? qESumR.current / qEc : null,
+      };
+    }
+    const now = new Date().toISOString();
+    const meta = {
+      exported_at: now,
+      n_position_bins: NBINS_X, x_plot_min: X_PLOT_MIN, x_plot_max: X_PLOT_MAX,
+      n_energy_bins: NBINS_E,
+      show_eigenstates: showEigen, show_theory: showTheory,
+      links: {
+        shape: linkedShape,
+        L: linkedL, m_eff: linkedMEff, v0: linkedV0,
+        gamma: linkedGamma, sigma: linkedSigma, energy: linkedEnergy,
+      },
+      A: sideMeta(shapeA, lengthA, mEffA, v0A, gammaA, sigmaA, energyA,
+                  eStarA, V0IntA, eHistMaxEvA,
+                  qXCountARef, qECountARef, qIonisedCountARef, qXOutsideCountARef,
+                  qXSumARef, qESumARef),
+      B: sideMeta(shapeB, lengthB, mEffB, v0B, gammaB, sigmaB, energyB,
+                  eStarB, V0IntB, eHistMaxEvB,
+                  qXCountBRef, qECountBRef, qIonisedCountBRef, qXOutsideCountBRef,
+                  qXSumBRef, qESumBRef),
+    };
+    function eigArr(stateList, eStarX) {
+      return stateList.map((s, i) => {
+        const out = {
+          n: i + 1, parity: s.parity,
+          e_n_ev: s.E * eStarX, e_n_engine: s.E,
+        };
+        // Finite-square states carry analytical wavenumbers; keep them
+        // in the file so a Tab 1/2 loader gets the same fields it would
+        // for one of its own files.
+        if (s.k     !== undefined) out.k = s.k;
+        if (s.kappa !== undefined) out.kappa = s.kappa;
+        return out;
+      });
+    }
+    const eigenvalues = { A: eigArr(statesA, eStarA), B: eigArr(statesB, eStarB) };
+
+    function posBins(densityArr) {
+      const xBinW = X_PLOT_RANGE / NBINS_X;
+      const out = [];
+      for (let i = 0; i < NBINS_X; i++) {
+        out.push({ bin_index: i, bin_center_engine: X_PLOT_MIN + (i + 0.5) * xBinW, density: densityArr[i] });
+      }
+      return out;
+    }
+    function enBins(densityArr, eHistMax) {
+      const eBinW = eHistMax / NBINS_E;
+      const out = [];
+      for (let i = 0; i < NBINS_E; i++) {
+        out.push({ bin_index: i, bin_center_ev: (i + 0.5) * eBinW, density: densityArr[i] });
+      }
+      return out;
+    }
+    return {
+      meta, eigenvalues,
+      position_histogram: { A: posBins(qXHistDensityA), B: posBins(qXHistDensityB) },
+      energy_histogram: {
+        A: enBins(qEHistDensityA, eHistMaxEvA),
+        B: enBins(qEHistDensityB, eHistMaxEvB),
+      },
+      now,
+    };
+  }
+
+  function baseFilenameTab3(now) {
+    const stamp = now.replace(/[:T]/g, '-').slice(0, 19);
+    // Short shape tag per side ("sq" / "par" / "coul") so the filename
+    // tells the eye at a glance which experiment the file captured.
+    const tagFor = (s) => s === 'finite-square' ? 'sq'
+                       : s === 'truncated-parabolic' ? 'par'
+                       : s === 'softened-coulomb' ? 'coul'
+                       : 'x';
+    return `fwell_shapes_${tagFor(shapeA)}-${tagFor(shapeB)}_V${v0A}-${v0B}_${stamp}`;
+  }
+
+  function triggerDownloadTab3(content, mime, filename) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportTab3JSON() {
+    const snap = buildSnapshotTab3();
+    const payload = {
+      schema: 'finite-well-shape-comparison-export/v1',
+      meta: snap.meta,
+      eigenvalues: snap.eigenvalues,
+      position_histogram: snap.position_histogram,
+      energy_histogram:   snap.energy_histogram,
+    };
+    triggerDownloadTab3(JSON.stringify(payload, null, 2), 'application/json', `${baseFilenameTab3(snap.now)}.json`);
+  }
+
+  function exportTab3CSV() {
+    const snap = buildSnapshotTab3();
+    const fmt = (v) => v === null || v === undefined ? '' : (typeof v === 'number' ? v.toFixed(6) : v);
+    const metaRows = [['key', 'value']];
+    function pushMeta(prefix, obj) {
+      for (const [k, v] of Object.entries(obj)) {
+        if (v !== null && typeof v === 'object') pushMeta(prefix + k + '.', v);
+        else metaRows.push([prefix + k, fmt(v)]);
+      }
+    }
+    pushMeta('', snap.meta);
+
+    const eigenRows = [['system', 'shape', 'n', 'parity', 'E_n_ev', 'E_n_engine', 'k', 'kappa']];
+    for (const e of snap.eigenvalues.A) eigenRows.push(['A', shapeA, e.n, e.parity, fmt(e.e_n_ev), fmt(e.e_n_engine), fmt(e.k), fmt(e.kappa)]);
+    for (const e of snap.eigenvalues.B) eigenRows.push(['B', shapeB, e.n, e.parity, fmt(e.e_n_ev), fmt(e.e_n_engine), fmt(e.k), fmt(e.kappa)]);
+
+    const dataRows = [['kind', 'system', 'bin_index', 'bin_center', 'density']];
+    for (const b of snap.position_histogram.A) dataRows.push(['position', 'A', b.bin_index, fmt(b.bin_center_engine), fmt(b.density)]);
+    for (const b of snap.position_histogram.B) dataRows.push(['position', 'B', b.bin_index, fmt(b.bin_center_engine), fmt(b.density)]);
+    for (const b of snap.energy_histogram.A)   dataRows.push(['energy',   'A', b.bin_index, fmt(b.bin_center_ev),     fmt(b.density)]);
+    for (const b of snap.energy_histogram.B)   dataRows.push(['energy',   'B', b.bin_index, fmt(b.bin_center_ev),     fmt(b.density)]);
+
+    function esc(v) { const s = String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }
+    const toCSV = (rows) => rows.map(r => r.map(esc).join(',')).join('\n');
+    const csv = toCSV(metaRows) + '\n\n' + toCSV(eigenRows) + '\n\n' + toCSV(dataRows) + '\n';
+    triggerDownloadTab3(csv, 'text/csv;charset=utf-8', `${baseFilenameTab3(snap.now)}.csv`);
+  }
+
+  // Close save menu on Escape, matching Tabs 1/2.
+  useEffect(() => {
+    if (!saveMenuOpen) return;
+    function onKey(e) { if (e.key === 'Escape') setSaveMenuOpen(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [saveMenuOpen]);
+
+  // -------------------------------------------------------------
+  // Load (cross-tab import)
+  // -------------------------------------------------------------
+  // Tab 3 accepts files from all three schemas:
+  //   - finite-well-particle-export/v1     (Tab 1) — prompts the user
+  //     for a destination side (A or B), loads as finite-square with
+  //     L=1nm, m*=m_e defaults (Tab 1 has no real-units L/m).
+  //   - finite-well-comparison-export/v1   (Tab 2) — fills both A and
+  //     B with the Tab 2 parameters, all shapes set to finite-square.
+  //   - finite-well-shape-comparison-export/v1 (Tab 3) — round-trip,
+  //     fully restored.
+  // The cross-tab seam between Tab 1/2's well-at-[0, L] convention and
+  // Tab 3's [-L/2, +L/2] convention is invisible at the parameter
+  // level: L, m*, V₀, E, Γ, σ all transfer as-is. Tab 1's energies
+  // are stored as dimensionless engine values; conversion uses
+  // E*(L=1nm, m=m_e) = E*_REF on cross-tab imports.
+
+  function clearSideHistograms(side) {
+    const xRef = side === 'A' ? qXHistARef : qXHistBRef;
+    const eRef = side === 'A' ? qEHistARef : qEHistBRef;
+    xRef.current = new Float64Array(NBINS_X);
+    eRef.current = new Float64Array(NBINS_E);
+    (side === 'A' ? qXSumARef         : qXSumBRef).current = 0;
+    (side === 'A' ? qESumARef         : qESumBRef).current = 0;
+    (side === 'A' ? qXCountARef       : qXCountBRef).current = 0;
+    (side === 'A' ? qECountARef       : qECountBRef).current = 0;
+    (side === 'A' ? qIonisedCountARef : qIonisedCountBRef).current = 0;
+    (side === 'A' ? qXOutsideCountARef: qXOutsideCountBRef).current = 0;
+    (side === 'A' ? qRecentXARef      : qRecentXBRef).current = [];
+    (side === 'A' ? qRecentEARef      : qRecentEBRef).current = [];
+    (side === 'A' ? qFlashCounterARef : qFlashCounterBRef).current = 0;
+    (side === 'A' ? tARef             : tBRef).current = 0;
+    (side === 'A' ? nextPauseARef     : nextPauseBRef).current = pauseIncrementRef.current;
+    (side === 'A' ? lastResetARef     : lastResetBRef).current = performance.now();
+  }
+
+  function applyTab1ToTab3Side(payload, side) {
+    // Tab 1 stores parameters in dimensionless engine units; convert
+    // via the default L=1nm, m*=m_e mapping so each engine value scales
+    // by E*_REF. Histograms aren't transferred (cross-import = params
+    // only; the user re-runs to accumulate against the new state).
+    const m = payload.meta || {};
+    if (typeof m.v0 !== 'number') { alert('Source file is missing V₀.'); return; }
+    const eStar  = E_STAR_REF_EV;
+    const v0Ev   = Math.max(V0_MIN_EV, Math.min(V0_MAX_EV, Math.round((m.v0 * eStar) * 10) / 10));
+    const eEv    = Math.max(0, Math.min(1.4 * v0Ev, Math.round((m.energy_setting * eStar) * 100) / 100));
+    const gEv    = Math.max(0, Math.round(((m.gamma_displayed != null ? m.gamma_displayed : (m.gamma_internal - 1)) * eStar) * 100) / 100);
+    const sigEv  = Math.max(0, Math.round((m.instrument_sigma * eStar) * 100) / 100);
+    const setShape  = side === 'A' ? setShapeA  : setShapeB;
+    const setLength = side === 'A' ? setLengthA : setLengthB;
+    const setMEff   = side === 'A' ? setMEffA   : setMEffB;
+    const setV0     = side === 'A' ? setV0A     : setV0B;
+    const setEnergy = side === 'A' ? setEnergyA : setEnergyB;
+    const setGamma  = side === 'A' ? setGammaA  : setGammaB;
+    const setSigma  = side === 'A' ? setSigmaA  : setSigmaB;
+    isLoadingRef.current = true;
+    setShape('finite-square');
+    setLength(1.0);
+    setMEff(1.0);
+    setV0(v0Ev);
+    setEnergy(eEv);
+    setGamma(gEv);
+    setSigma(sigEv);
+    clearSideHistograms(side);
+    setRunning(false);
+    setTick((t) => t + 1);
+    setPendingCrossImportT1(null);
+    setTimeout(() => { isLoadingRef.current = false; }, 0);
+  }
+
+  function applyTab2ToTab3(payload) {
+    // Tab 2 → Tab 3: same real-units everywhere, just stamp both sides
+    // with shape = finite-square. Histograms transfer cleanly since the
+    // bin/engine conventions are shared.
+    const m = payload.meta || {};
+    if (m.n_position_bins !== NBINS_X || m.n_energy_bins !== NBINS_E) {
+      alert('File was created with different bin counts. Load aborted.');
+      return false;
+    }
+    if (!m.A || !m.B) { alert('Tab 2 file is missing System A or B metadata. Load aborted.'); return false; }
+    isLoadingRef.current = true;
+    setRunning(false);
+    setShapeA('finite-square'); setShapeB('finite-square');
+    setLengthA(m.A.length_nm); setMEffA(m.A.m_eff_me); setV0A(m.A.v0_ev);
+    setGammaA(m.A.gamma_ev);   setSigmaA(m.A.sigma_ev); setEnergyA(m.A.energy_ev);
+    setLengthB(m.B.length_nm); setMEffB(m.B.m_eff_me); setV0B(m.B.v0_ev);
+    setGammaB(m.B.gamma_ev);   setSigmaB(m.B.sigma_ev); setEnergyB(m.B.energy_ev);
+    if (m.links) {
+      setLinkedL(!!m.links.L);         setLinkedMEff(!!m.links.m_eff);
+      setLinkedV0(!!m.links.v0);       setLinkedGamma(!!m.links.gamma);
+      setLinkedSigma(!!m.links.sigma); setLinkedEnergy(!!m.links.energy);
+    }
+    if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
+    if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    restoreSideHistogramsFromPayload(payload, m, 'A');
+    restoreSideHistogramsFromPayload(payload, m, 'B');
+    setTick((t) => t + 1);
+    setTimeout(() => { isLoadingRef.current = false; }, 0);
+    return true;
+  }
+
+  function restoreSideHistogramsFromPayload(payload, m, side) {
+    // Shared rehydration helper for Tab 2 and Tab 3 file loads. Counts
+    // come back from density × total × bin-width (engine units, since
+    // the bins are stored in Tab 2's [X_PLOT_MIN, X_PLOT_MAX] engine
+    // convention regardless of which tab created the file).
+    const xBinW = X_PLOT_RANGE / NBINS_X;
+    const meta = m[side];
+    const posBins = payload.position_histogram?.[side] || [];
+    const enBins  = payload.energy_histogram?.[side]   || [];
+    const eBinW   = meta.e_hist_max_ev / NBINS_E;
+    const xTotal  = meta.position_measurements || 0;
+    const eTotal  = meta.energy_measurements || 0;
+    const xHist = new Float64Array(NBINS_X);
+    const eHist = new Float64Array(NBINS_E);
+    for (const b of posBins) {
+      if (b.bin_index >= 0 && b.bin_index < NBINS_X) xHist[b.bin_index] = (b.density || 0) * xTotal * xBinW;
+    }
+    for (const b of enBins) {
+      if (b.bin_index >= 0 && b.bin_index < NBINS_E) eHist[b.bin_index] = (b.density || 0) * eTotal * eBinW;
+    }
+    const xHistR    = side === 'A' ? qXHistARef         : qXHistBRef;
+    const eHistR    = side === 'A' ? qEHistARef         : qEHistBRef;
+    const xSumR     = side === 'A' ? qXSumARef          : qXSumBRef;
+    const eSumR     = side === 'A' ? qESumARef          : qESumBRef;
+    const xCountR   = side === 'A' ? qXCountARef        : qXCountBRef;
+    const eCountR   = side === 'A' ? qECountARef        : qECountBRef;
+    const ionR      = side === 'A' ? qIonisedCountARef  : qIonisedCountBRef;
+    const xOutR     = side === 'A' ? qXOutsideCountARef : qXOutsideCountBRef;
+    const recentXR  = side === 'A' ? qRecentXARef       : qRecentXBRef;
+    const recentER  = side === 'A' ? qRecentEARef       : qRecentEBRef;
+    const flashR    = side === 'A' ? qFlashCounterARef  : qFlashCounterBRef;
+    const tR        = side === 'A' ? tARef              : tBRef;
+    const nextPauseR= side === 'A' ? nextPauseARef      : nextPauseBRef;
+    const lastResetR= side === 'A' ? lastResetARef      : lastResetBRef;
+    xHistR.current = xHist;
+    eHistR.current = eHist;
+    xCountR.current = xTotal;
+    eCountR.current = eTotal;
+    ionR.current  = meta.ionisation_events || 0;
+    xOutR.current = meta.outside_box_events || 0;
+    xSumR.current = (meta.mean_x_engine != null) ? meta.mean_x_engine * xTotal : 0;
+    eSumR.current = (meta.mean_e_ev     != null) ? meta.mean_e_ev     * eTotal : 0;
+    recentXR.current = []; recentER.current = []; flashR.current = 0;
+    tR.current = 0;
+    lastResetR.current = performance.now();
+    const ceiled = Math.ceil((eTotal + 1) / pauseIncrementRef.current) * pauseIncrementRef.current;
+    nextPauseR.current = Math.max(pauseIncrementRef.current, ceiled);
+  }
+
+  function applyLoadedStateTab3(payload) {
+    if (payload.schema === 'finite-well-particle-export/v1') {
+      // Tab 1 file — needs a destination side, deferred to a modal.
+      setPendingCrossImportT1(payload);
+      return false;
+    }
+    if (payload.schema === 'finite-well-comparison-export/v1') {
+      return applyTab2ToTab3(payload);
+    }
+    if (payload.schema !== 'finite-well-shape-comparison-export/v1') {
+      alert(`Unsupported file: schema "${payload.schema || 'unknown'}". This tab loads finite-well-particle-export/v1, finite-well-comparison-export/v1, or finite-well-shape-comparison-export/v1 files.`);
+      return false;
+    }
+    // Native Tab 3 schema — fully restore.
+    const m = payload.meta || {};
+    if (m.n_position_bins !== NBINS_X || m.n_energy_bins !== NBINS_E) {
+      alert('File was created with different bin counts. Load aborted.');
+      return false;
+    }
+    if (!m.A || !m.B) { alert('File is missing System A or B metadata. Load aborted.'); return false; }
+    isLoadingRef.current = true;
+    setRunning(false);
+    setShapeA(m.A.shape || 'finite-square');
+    setShapeB(m.B.shape || 'finite-square');
+    setLengthA(m.A.length_nm); setMEffA(m.A.m_eff_me); setV0A(m.A.v0_ev);
+    setGammaA(m.A.gamma_ev);   setSigmaA(m.A.sigma_ev); setEnergyA(m.A.energy_ev);
+    setLengthB(m.B.length_nm); setMEffB(m.B.m_eff_me); setV0B(m.B.v0_ev);
+    setGammaB(m.B.gamma_ev);   setSigmaB(m.B.sigma_ev); setEnergyB(m.B.energy_ev);
+    if (m.links) {
+      setLinkedShape(!!m.links.shape);
+      setLinkedL(!!m.links.L);         setLinkedMEff(!!m.links.m_eff);
+      setLinkedV0(!!m.links.v0);       setLinkedGamma(!!m.links.gamma);
+      setLinkedSigma(!!m.links.sigma); setLinkedEnergy(!!m.links.energy);
+    }
+    if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
+    if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    restoreSideHistogramsFromPayload(payload, m, 'A');
+    restoreSideHistogramsFromPayload(payload, m, 'B');
+    setTick((t) => t + 1);
+    setTimeout(() => { isLoadingRef.current = false; }, 0);
+    return true;
+  }
+
+  function readFileAndLoadTab3(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try { applyLoadedStateTab3(JSON.parse(reader.result)); }
+      catch (e) { alert(`Could not parse file: ${e.message}`); }
+    };
+    reader.onerror = () => alert('Could not read file.');
+    reader.readAsText(file);
+  }
+
+  function handleFileChosenTab3(file) {
+    if (!file) return;
+    readFileAndLoadTab3(file);
+  }
+
+  // Derived histogram densities + means for rendering. Direct
+  // computation on every render rather than useMemo — refs mutating
+  // between renders don't trigger a useMemo invalidation, so the
+  // memoised buffer can end up stale even though the rendered counter
+  // is up-to-date. Tab 2 uses the same direct-compute pattern for the
+  // same reason.
+  //
+  // The bin width is in engine units (X_PLOT_RANGE / NBINS_X = 1.6/120),
+  // not nm, because the Tab 3 sim loop normalises xSamp to the [0, 1]
+  // engine convention before binning (see comment in stepSide). Using
+  // the engine bin width keeps the density values consistent across
+  // tabs and lets the existing PositionHistogram y-scaling work as-is.
+  const xBinWidth = X_PLOT_RANGE / NBINS_X;
+  const eBinWA = eHistMaxEvA / NBINS_E;
+  const eBinWB = eHistMaxEvB / NBINS_E;
+  const qXCountA = qXCountARef.current;
+  const qECountA = qECountARef.current;
+  const qXCountB = qXCountBRef.current;
+  const qECountB = qECountBRef.current;
+  const qXHistDensityA = qXCountA > 0 ? Array.from(qXHistARef.current).map((c) => c / (qXCountA * xBinWidth)) : Array(NBINS_X).fill(0);
+  const qEHistDensityA = qECountA > 0 ? Array.from(qEHistARef.current).map((c) => c / (qECountA * eBinWA))      : Array(NBINS_E).fill(0);
+  const qXHistDensityB = qXCountB > 0 ? Array.from(qXHistBRef.current).map((c) => c / (qXCountB * xBinWidth)) : Array(NBINS_X).fill(0);
+  const qEHistDensityB = qECountB > 0 ? Array.from(qEHistBRef.current).map((c) => c / (qECountB * eBinWB))      : Array(NBINS_E).fill(0);
+  const qxMeanA = qXCountA > 0 ? qXSumARef.current / qXCountA : null;
+  const qxMeanB = qXCountB > 0 ? qXSumBRef.current / qXCountB : null;
+  const qeMeanA = qECountA > 0 ? qESumARef.current / qECountA : null;
+  const qeMeanB = qECountB > 0 ? qESumBRef.current / qECountB : null;
+  const qIonisedFracA = qECountA > 0 ? qIonisedCountARef.current / qECountA : 0;
+  const qIonisedFracB = qECountB > 0 ? qIonisedCountBRef.current / qECountB : 0;
+
+  // Classical turning points in nm for the current prep energy on each
+  // side, and the same boundary in Tab 2's [0, 1] engine convention so
+  // the histogram walls + shaded regions can use it directly.
+  const xTurningNmA = classicalTurningPointNm(shapeA, lengthA, v0A, energyA);
+  const xTurningNmB = classicalTurningPointNm(shapeB, lengthB, v0B, energyB);
+  const wallsEngineXA = Number.isFinite(xTurningNmA)
+    ? [0.5 - xTurningNmA / lengthA, 0.5 + xTurningNmA / lengthA]
+    : null;
+  const wallsEngineXB = Number.isFinite(xTurningNmB)
+    ? [0.5 - xTurningNmB / lengthB, 0.5 + xTurningNmB / lengthB]
+    : null;
+
+  // P_out — fraction of the prep state's |ψ|² lying past the classical
+  // turning point ±x_t. Computed from the **full FD wavefunctions**
+  // rather than from the histogram bins, for two reasons:
+  //   - The histogram only covers the visible range (±0.8 L); for
+  //     Coulomb high-n states the classical turning point can land far
+  //     outside that, and the histogram would miss real wavefunction
+  //     amplitude in the tails.
+  //   - For a Lorentzian-weighted superposition Σ c_n ψ_n exp(−iE_n t),
+  //     the time-averaged density is Σ p_n |ψ_n|² (cross terms with
+  //     distinct E_n average to zero), so P_out = Σ p_n × P_n,out with
+  //     P_n,out = ∫_{|x| > x_t} |ψ_n(x)|² dx — a clean closed-form sum.
+  function computeLeakFracFromPsi(stateList, probArr, xTurning, xGridNm) {
+    if (!Number.isFinite(xTurning) || xTurning <= 0) return 0;
+    if (!stateList || stateList.length === 0 || xGridNm.length < 2) return 0;
+    const h = xGridNm[1] - xGridNm[0];
+    const N = xGridNm.length;
+    let total = 0;
+    for (let n = 0; n < stateList.length; n++) {
+      if (probArr[n] < 1e-14) continue;
+      const psi = stateList[n].psi;
+      let leakN = 0;
+      for (let i = 0; i < N; i++) {
+        if (Math.abs(xGridNm[i]) > xTurning) {
+          const w = (i === 0 || i === N - 1) ? 0.5 : 1;
+          leakN += w * psi[i] * psi[i];
+        }
+      }
+      leakN *= h;
+      total += probArr[n] * leakN;
+    }
+    return total;
+  }
+  const qLeakFracA = computeLeakFracFromPsi(statesA, probsA, xTurningNmA, resultA.xGrid_nm);
+  const qLeakFracB = computeLeakFracFromPsi(statesB, probsB, xTurningNmB, resultB.xGrid_nm);
+
+  // Position-theory overlay curves — the time-averaged expected
+  // |ψ(x)|² density for each side's prep state, drawn on top of the
+  // PositionHistogram when Show theory is on. Same expression on
+  // every shape (the FD wavefunction IS the theory for parabolic and
+  // Coulomb; for finite-square the FD curve matches the analytical
+  // one to graphical accuracy).
+  const qPosTheoryA = useMemo(
+    () => makePosTheoryTab3(statesA, probsA, resultA.xGrid_nm, lengthA),
+    [statesA, probsA, resultA, lengthA],
+  );
+  const qPosTheoryB = useMemo(
+    () => makePosTheoryTab3(statesB, probsB, resultB.xGrid_nm, lengthB),
+    [statesB, probsB, resultB, lengthB],
+  );
+
+  // Energy-theory overlay curves — bound (Gaussian-broadened eigen
+  // peaks weighted by Born probabilities) plus continuum (the
+  // Lorentzian-prep tail above V₀, convolved with σ). Same shape-
+  // agnostic helper used by Tab 2; on Tab 3 the eigenvalues come from
+  // the dispatched solver (FD on parabolic/Coulomb, analytical on
+  // finite-square) so the formula transfers without modification.
+  const qEnergyTheoryA = useMemo(
+    () => makeEnergyTheoryShared(statesA, probsA, sigmaA, gammaA, eStarA, V0IntA, v0A, energyA, eHistMaxEvA),
+    [statesA, probsA, sigmaA, gammaA, eStarA, V0IntA, v0A, energyA, eHistMaxEvA],
+  );
+  const qEnergyTheoryB = useMemo(
+    () => makeEnergyTheoryShared(statesB, probsB, sigmaB, gammaB, eStarB, V0IntB, v0B, energyB, eHistMaxEvB),
+    [statesB, probsB, sigmaB, gammaB, eStarB, V0IntB, v0B, energyB, eHistMaxEvB],
+  );
+
+  const totalCount = Math.max(qECountA, qECountB);
+
+  void language;   void setLanguage;
+  void eToEvA; void eToEvB;
+
+  return (
+    <div style={{ background: COL.bg, color: COL.ink, fontFamily: FONTS.body, minHeight: '100vh', padding: '20px 24px 32px' }}>
+      <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+
+        {/* Header matches Tab 1/2's outer geometry (same maxWidth, same
+            font sizes) so switching tabs doesn't shift the page; the
+            subtitle is two-lined and vertically centred against the
+            title here because Tab 3's chemistry framing reads better
+            in two beats — "what knob" / "what comparison". */}
+        <header style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+          <h1 style={{
+            fontFamily: FONTS.display, fontWeight: 400, fontSize: 38, margin: 0, padding: 0,
+            lineHeight: 1, letterSpacing: -0.5, fontStyle: 'italic', whiteSpace: 'nowrap',
+          }}>
+            Particle, Quo Vadis. Redux
+          </h1>
+          <div style={{
+            fontFamily: FONTS.mono, fontSize: 13, color: COL.inkDim, letterSpacing: 0.5,
+            lineHeight: 1.4,
+          }}>
+            <div>Shape of the confining potential</div>
+            <div>Two quantum systems, A vs B</div>
+          </div>
+        </header>
+
+        <TabBar activeTab={activeTab} onChange={onChangeTab} />
+
+      {/* ===== Params row (A | B) — controls at the top of each side
+           so the user sets up both systems first. The transport bar
+           follows BELOW the params, so Play/Pause/Stop stay reachable
+           when the user scrolls down to watch the sims. ===== */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch', marginBottom: 14 }}>
+        <Tab3SystemPanel section="params"
+          label="A"
+          shape={shapeA} setShapeWithLink={setShapeAWithLink}
+          linkedShape={linkedShape} toggleLinkedShape={toggleLinkedShape}
+          lengthVal={lengthA} setLengthVal={setLengthAWithLink}
+          mEffVal={mEffA}     setMEffVal={setMEffAWithLink}
+          v0Val={v0A}         setV0Val={setV0AWithLink}
+          gammaVal={gammaA}   setGammaVal={setGammaAWithLink}
+          sigmaVal={sigmaA}   setSigmaVal={setSigmaAWithLink}
+          energyVal={energyA} setEnergyVal={setEnergyAWithLink}
+          setEnergyByIndex={setEnergyAByIndex}
+          linkedL={linkedL} toggleLinkedL={toggleLinkedL}
+          linkedMEff={linkedMEff} toggleLinkedMEff={toggleLinkedMEff}
+          linkedV0={linkedV0} toggleLinkedV0={toggleLinkedV0}
+          linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
+          linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+          linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
+          eStar={eStarA} V0Internal={V0IntA}
+          states={statesA} eigenStatesEv={eigenStatesEvA}
+          v0Max={v0Max}
+          showEigen={showEigen}
+          probs={probsA}
+        />
+        <Tab3SystemPanel section="params"
+          label="B"
+          shape={shapeB} setShapeWithLink={setShapeBWithLink}
+          linkedShape={linkedShape} toggleLinkedShape={toggleLinkedShape}
+          lengthVal={lengthB} setLengthVal={setLengthBWithLink}
+          mEffVal={mEffB}     setMEffVal={setMEffBWithLink}
+          v0Val={v0B}         setV0Val={setV0BWithLink}
+          gammaVal={gammaB}   setGammaVal={setGammaBWithLink}
+          sigmaVal={sigmaB}   setSigmaVal={setSigmaBWithLink}
+          energyVal={energyB} setEnergyVal={setEnergyBWithLink}
+          setEnergyByIndex={setEnergyBByIndex}
+          linkedL={linkedL} toggleLinkedL={toggleLinkedL}
+          linkedMEff={linkedMEff} toggleLinkedMEff={toggleLinkedMEff}
+          linkedV0={linkedV0} toggleLinkedV0={toggleLinkedV0}
+          linkedGamma={linkedGamma} toggleLinkedGamma={toggleLinkedGamma}
+          linkedSigma={linkedSigma} toggleLinkedSigma={toggleLinkedSigma}
+          linkedEnergy={linkedEnergy} toggleLinkedEnergy={toggleLinkedEnergy}
+          eStar={eStarB} V0Internal={V0IntB}
+          states={statesB} eigenStatesEv={eigenStatesEvB}
+          v0Max={v0Max}
+          showEigen={showEigen}
+          probs={probsB}
+        />
+      </div>
+
+      {/* Transport bar — identical layout to Tabs 1/2. Save and Load
+          are disabled-styled (colour={COL.inkDim}) and no-op until
+          steps 5/6 wire them; the rest is live. */}
+      <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={allIonised} colour={allIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
+          <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />
+          {/* Save dropdown. Disabled until at least one side has any
+              measurements, matching Tabs 1/2's behaviour. */}
+          <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
+            <TransportButton
+              kind="save"
+              active={saveMenuOpen}
+              onClick={() => {
+                if (qECountA === 0 && qECountB === 0) return;
+                setSaveMenuOpen((o) => !o);
+              }}
+              colour={(qECountA > 0 || qECountB > 0) ? COL.quantum : COL.inkDim}
+              bg={COL.panel}
+            />
+            {saveMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute', top: '110%', left: '50%',
+                  transform: 'translateX(-50%)',
+                  background: COL.panel, border: `1px solid ${COL.rule}`,
+                  borderRadius: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  zIndex: 10, display: 'flex', flexDirection: 'column',
+                  minWidth: 96, overflow: 'hidden',
+                }}
+              >
+                <button
+                  onClick={() => { exportTab3CSV();  setSaveMenuOpen(false); }}
+                  style={{
+                    padding: '8px 14px', background: 'transparent', color: COL.ink,
+                    border: 'none', borderBottom: `1px solid ${COL.rule}`,
+                    cursor: 'pointer', fontFamily: FONTS.mono, fontSize: 13,
+                    letterSpacing: 0.3, textAlign: 'left',
+                  }}
+                >CSV</button>
+                <button
+                  onClick={() => { exportTab3JSON(); setSaveMenuOpen(false); }}
+                  style={{
+                    padding: '8px 14px', background: 'transparent', color: COL.ink,
+                    border: 'none', cursor: 'pointer',
+                    fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3,
+                    textAlign: 'left',
+                  }}
+                >JSON</button>
+              </div>
+            )}
+          </div>
+          <TransportButton
+            kind="load"
+            active={false}
+            onClick={() => fileInputRefTab3.current && fileInputRefTab3.current.click()}
+            colour={COL.quantum}
+            bg={COL.panel}
+          />
+          <input
+            ref={fileInputRefTab3}
+            type="file" accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files && e.target.files[0];
+              handleFileChosenTab3(file);
+              e.target.value = '';
+            }}
+          />
+          <TransportButton kind="settings" active={settingsOpen} onClick={() => setSettingsOpen((o) => !o)} colour={COL.accent} bg={COL.panel} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <CheckboxRow
+            checked={showTheory}
+            onChange={() => setShowTheory((b) => !b)}
+            label="Show theory"
+            accent={COL.quantum}
+            inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+            title="Overlay analytical predictions on each system: Σ |c_n|² Gaussian peaks (bound) and a Lorentzian tail (continuum) on the energy histogram, plus the time-averaged |ψ(x)|² on the position histogram."
+          />
+          <CheckboxRow
+            checked={showEigen}
+            onChange={() => setShowEigen((b) => !b)}
+            label="Show eigenstates"
+            accent={COL.quantum}
+            inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+            title="Mark each bound state E_n on the energy histograms, the sim panels (as dashed guidelines), the Energy sliders (as snap ticks). Also adds the |c_n|² column to the bound-states tables. Linked-energy mode then pairs A and B by n rather than absolute E."
+          />
+        </div>
+        <div style={{ flex: 1, textAlign: 'right' }}>
+          <div style={{
+            fontFamily: FONTS.mono, fontSize: 26, fontWeight: 600,
+            color: COL.ink, fontVariantNumeric: 'tabular-nums', lineHeight: 1,
+          }}>
+            {totalCount.toLocaleString()}
+          </div>
+          <div style={{
+            fontFamily: FONTS.mono, fontSize: 10, color: COL.inkDim,
+            letterSpacing: 1.5, textTransform: 'uppercase', marginTop: 2,
+          }}>
+            Measurements
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <Tab3SystemPanel section="sim"
+          label="A"
+          lengthVal={lengthA}
+          v0Val={v0A}
+          eStar={eStarA} V0Internal={V0IntA}
+          states={statesA} eigenStatesEv={eigenStatesEvA}
+          xGrid_nm={resultA.xGrid_nm} V_eV={resultA.V_eV}
+          isIonised={isIonisedA} probs={probsA}
+          tCurrent={tARef.current} qXLatest={qXLatestARef.current}
+          qRecentX={qRecentXARef.current} qRecentE={qRecentEARef.current}
+          qXHistDensity={qXHistDensityA} qEHistDensity={qEHistDensityA}
+          qxMean={qxMeanA} qeMean={qeMeanA}
+          qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
+          psiMode={psiModeA} setPsiMode={setPsiModeA}
+          energyVal={energyA}
+          eHistMaxEv={eHistMaxEvA}
+          showEigen={showEigen}
+          xMinNm={xMinNmA} xMaxNm={xMaxNmA}
+          xTurningNm={xTurningNmA} wallsEngineX={wallsEngineXA}
+          qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA} showTheory={showTheory}
+          logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+        />
+        <Tab3SystemPanel section="sim"
+          label="B"
+          lengthVal={lengthB}
+          v0Val={v0B}
+          eStar={eStarB} V0Internal={V0IntB}
+          states={statesB} eigenStatesEv={eigenStatesEvB}
+          xGrid_nm={resultB.xGrid_nm} V_eV={resultB.V_eV}
+          isIonised={isIonisedB} probs={probsB}
+          tCurrent={tBRef.current} qXLatest={qXLatestBRef.current}
+          qRecentX={qRecentXBRef.current} qRecentE={qRecentEBRef.current}
+          qXHistDensity={qXHistDensityB} qEHistDensity={qEHistDensityB}
+          qxMean={qxMeanB} qeMean={qeMeanB}
+          qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
+          psiMode={psiModeB} setPsiMode={setPsiModeB}
+          energyVal={energyB}
+          eHistMaxEv={eHistMaxEvB}
+          showEigen={showEigen}
+          xMinNm={xMinNmB} xMaxNm={xMaxNmB}
+          xTurningNm={xTurningNmB} wallsEngineX={wallsEngineXB}
+          qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB} showTheory={showTheory}
+          logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+        />
+      </div>
+
+      {/* Adaptive Notes — shape-aware "What you're looking at". Three
+          columns matching Tabs 1 & 2: prep / readout / shape contrast.
+          Collapsed by default, persists across reloads. */}
+      <CollapsibleSection
+        title="What you're looking at"
+        expanded={showNotes}
+        onToggle={() => setShowNotes((v) => !v)}
+        mono={FONTS.mono} inkDim={COL.inkDim}
+      >
+        <Tab3Notes
+          shapeA={shapeA} shapeB={shapeB}
+          lengthA={lengthA} lengthB={lengthB}
+          mEffA={mEffA} mEffB={mEffB}
+          v0A={v0A} v0B={v0B}
+          energyA={energyA} energyB={energyB}
+          gammaA={gammaA} gammaB={gammaB}
+          statesA={statesA} statesB={statesB}
+          probsA={probsA} probsB={probsB}
+          eStarA={eStarA} eStarB={eStarB}
+          isIonisedA={isIonisedA} isIonisedB={isIonisedB}
+          qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
+          qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
+          qXCountA={qXCountA} qXCountB={qXCountB}
+          qECountA={qECountA} qECountB={qECountB}
+          mono={FONTS.mono} display={FONTS.display} body={FONTS.body}
+          ink={COL.ink} inkDim={COL.inkDim}
+          accent={COL.accent} qCol={COL.quantum} ionisedCol={COL.ionised}
+        />
+      </CollapsibleSection>
+
+      {/* Tab 1 → Tab 3 cross-import: user picks the destination side
+          (A or B). The other side is unaffected; the loaded side
+          becomes finite-square with L = 1 nm, m* = m_e defaults. */}
+      {pendingCrossImportT1 && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          }}
+          onClick={() => setPendingCrossImportT1(null)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: COL.panel, border: `1px solid ${COL.rule}`, borderRadius: 6,
+              padding: '20px 24px', maxWidth: 520,
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+              fontFamily: FONTS.body,
+            }}
+          >
+            <div style={{ fontFamily: FONTS.display, fontSize: 22, fontStyle: 'italic', marginBottom: 10 }}>
+              Single-system file — pick a destination
+            </div>
+            <div style={{ color: COL.inkDim, fontSize: 14, lineHeight: 1.5, marginBottom: 18 }}>
+              This is a Tab 1 snapshot. Which side of Tab 3 should it load
+              into? The other side stays untouched. The loaded side is
+              set to finite-square with <em>L</em> = 1 nm, <em>m</em><sup>*</sup> = m<sub>e</sub>
+              as defaults (Tab 1 doesn't store real-units geometry).
+              Histograms aren't transferred — re-run to accumulate.
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => setPendingCrossImportT1(null)}
+                style={{
+                  padding: '8px 14px', background: 'transparent', color: COL.inkDim,
+                  border: `1px solid ${COL.rule}`, borderRadius: 4, cursor: 'pointer',
+                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3,
+                }}
+              >Cancel</button>
+              <button
+                onClick={() => applyTab1ToTab3Side(pendingCrossImportT1, 'A')}
+                style={{
+                  padding: '8px 18px', background: COL.accent, color: '#0e1320',
+                  border: `1px solid ${COL.accent}`, borderRadius: 4, cursor: 'pointer',
+                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
+                }}
+              >Into System A</button>
+              <button
+                onClick={() => applyTab1ToTab3Side(pendingCrossImportT1, 'B')}
+                style={{
+                  padding: '8px 18px', background: COL.accent, color: '#0e1320',
+                  border: `1px solid ${COL.accent}`, borderRadius: 4, cursor: 'pointer',
+                  fontFamily: FONTS.mono, fontSize: 13, letterSpacing: 0.3, fontWeight: 600,
+                }}
+              >Into System B</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Settings modal — minimal version. Full per-tab parity with
+          Tab 2 lands in a later chunk; for now expose the four knobs
+          students are most likely to want. */}
+      {settingsOpen && (
+        <div
+          onClick={() => setSettingsOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              ...panelStyle(),
+              minWidth: 380, maxWidth: 480,
+              background: COL.panel,
+            }}
+          >
+            <PanelHeader tag="Tab 3 settings" color={COL.accent} />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', columnGap: 14, rowGap: 10, marginTop: 10, fontFamily: FONTS.mono, fontSize: 12, color: COL.inkDim }}>
+              <div>Auto-pause every (measurements)</div>
+              <Stepper value={pauseIncrement} onChange={setPauseIncrement} min={1000} max={100000} step={1000} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div>Max bound states shown</div>
+              <Stepper value={maxBoundCap} onChange={setMaxBoundCap} min={1} max={MAX_BOUND_STATES_DISPLAY} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div>Wavefunction time multiplier</div>
+              <Stepper value={waveTimeMult} onChange={setWaveTimeMult} min={0.1} max={10} step={0.1} decimals={1} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div>Random seed (0 = unseeded)</div>
+              <Stepper value={randomSeed} onChange={setRandomSeed} min={0} max={99999999} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{ padding: '6px 14px', background: COL.accent, color: COL.bg, border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: FONTS.mono, fontSize: 12 }}
+              >Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================
 // TOP-LEVEL DISPATCHER
 // =============================================================
 
@@ -6000,6 +10414,9 @@ function ParticleQuoVadisRedux() {
       </div>
       <div style={{ display: activeTab === 'tab2' ? 'block' : 'none' }}>
         <Tab2Content activeTab={activeTab} onChangeTab={setActiveTab} />
+      </div>
+      <div style={{ display: activeTab === 'tab3' ? 'block' : 'none' }}>
+        <Tab3Content activeTab={activeTab} onChangeTab={setActiveTab} />
       </div>
     </>
   );

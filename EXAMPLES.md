@@ -36,7 +36,7 @@ The Depth tab runs a classical and a quantum particle in the same finite well at
 
 **Setup.** *V₀* = 50 (shallow well, only a couple of bound states). Γ = 0, σ = 0. Show eigenstates ON. Prep at the topmost bound state.
 
-**Observe.** Classical *P*<sub>out</sub> = 0 — the particle is confined, period. Quantum *P*<sub>out</sub> is visibly nonzero (typically 10–15 %); the wavefunction extends past the walls into the classically forbidden region. *P*<sub>ion</sub> stays 0 on both sides (with Γ = 0 the preparation is a pure eigenstate sitting below *V*₀; no continuum admixture). The contrast is purely about **position**: same prep, same energy, but the quantum particle has measurable probability of being found outside the box.
+**Observe.** Classical *P*<sub>out</sub> = 0 — the particle is confined, period. Quantum *P*<sub>out</sub> is visibly nonzero and *large* for the topmost state of this shallow well — measured **≈ 35–40 %** at 10 k measurements (the topmost eigenstate sits only ~3.5 below *V*₀, so its decay length is a sizeable fraction of *L* and the tails carry a lot of probability). The wavefunction extends well past the walls into the classically forbidden region. *P*<sub>ion</sub> stays **exactly 0** on both sides (with Γ = 0 the preparation is a pure eigenstate sitting below *V*₀; no continuum admixture). The contrast is purely about **position**: same prep, same energy, but the quantum particle has measurable probability of being found outside the box.
 
 **Chemistry.** This is the *precondition for tunneling* — wavefunction amplitude in classically forbidden regions. It's also why molecular orbitals are spatially diffuse rather than sharply confined to bonds. Note: position-leakage (P_out) and ionisation (P_ion) are different events — leakage measures *where* a bound electron is found, not *whether* it's bound.
 
@@ -44,7 +44,7 @@ The Depth tab runs a classical and a quantum particle in the same finite well at
 
 **Setup.** *V₀* = 100. Γ = 20 (broadband prep), σ = 2. Prep at *E* = 80 (clearly below *V₀*).
 
-**Observe.** Classical *P*<sub>ion</sub> = 0 — its energy is below *V₀*, so it cannot escape. Quantum *P*<sub>ion</sub> is small but nonzero because the Lorentzian preparation has a tail that crosses *V₀*. Show theory ON makes the band cross over the threshold visible.
+**Observe.** Classical *P*<sub>ion</sub> = 0 — its energy is below *V₀*, so it cannot escape. Quantum *P*<sub>ion</sub> is nonzero because the Lorentzian preparation has a tail that crosses *V₀* — with this broad Γ = 20 prep it measures **≈ 15 %** at 10 k (a Lorentzian centred at *E* = 80 with FWHM 20 puts roughly that much weight past *V₀* = 100). For a smaller pre-threshold fraction, narrow Γ or drop the prep further below *V₀*. Show theory ON makes the band cross over the threshold visible.
 
 **Chemistry.** Photoionisation cross-sections rise smoothly through the threshold, not as a step. The broadband nature of a real source is what makes pre-threshold ionisation observable.
 
@@ -64,8 +64,10 @@ Run four times, changing only the broadening parameters:
 
 1. Γ = 0, σ = 0 — pure eigenstate, no measurement noise. Both histograms show a sharp peak at *E*<sub>top</sub>. *P*<sub>ion</sub> is **exactly 0** on both sides — the prep is a single bound state, sampling never crosses *V*<sub>0</sub>.
 2. Γ = 0, σ = 5 — pure eigenstate, blurred readout. Both histograms now show a Gaussian of width σ around *E*<sub>top</sub>. *P*<sub>ion</sub> is still **0** — σ broadens *measurements* but doesn't move the prep into the continuum. Some readings happen to fall above *V*<sub>0</sub> due to noise, but those are still bound events, just with noisy energy values.
-3. σ = 0, Γ = 5 — broad prep, sharp readout. Classical stays sharp at *E*<sub>top</sub>. Quantum now spreads into peaks at neighbouring eigenstates (*E*<sub>top−1</sub>, *E*<sub>top−2</sub>) — the Lorentzian preparation has admixed those nearby states. *P*<sub>ion</sub> picks up a small contribution if the Lorentzian's tail crosses *V*<sub>0</sub>: now the prep itself genuinely puts some weight in the continuum.
-4. σ = 5, Γ = 10 — both. Quantum histogram shows broadened peaks at several eigenstates; *P*<sub>ion</sub> is the largest of the four runs because the prep tail extends well past *V*<sub>0</sub> *and* the readout is noisy.
+3. σ = 0, Γ = 5 — broad prep, sharp readout. Classical stays sharp at *E*<sub>top</sub>. Quantum now spreads into peaks at neighbouring eigenstates (*E*<sub>top−1</sub>, *E*<sub>top−2</sub>) — the Lorentzian preparation has admixed those nearby states. *P*<sub>ion</sub> now picks up a genuine contribution from the Lorentzian's tail crossing *V*<sub>0</sub> — measured **≈ 20 %** at 10 k. (It's not a tiny number here precisely because the prep sits at the topmost state, only ~4 below *V*₀ = 100; the point is that it is the prep, not the readout, that creates it.)
+4. σ = 5, Γ = 10 — both. Quantum histogram shows broadened peaks at several eigenstates; *P*<sub>ion</sub> is the largest of the four runs (**≈ 30 %** at 10 k) because the prep tail extends well past *V*<sub>0</sub> *and* the readout is noisy.
+
+*Measured P*<sub>ion</sub> *ordering across the four runs (10 k each): 0, 0, ≈ 0.20, ≈ 0.30 — the equality of the first two (σ alone never ionises) and the strict increase across the last two are the lesson, not the absolute magnitudes.*
 
 **Chemistry.** σ models *instrument resolution* — it blurs measurements on both sides equally; it does NOT change the prepared state or the bound/continuum split. Γ models *preparation width* — it widens the prepared state into a Lorentzian-weighted superposition of nearby eigenstates and routes some probability into the continuum. Only Γ can cause an "I prepared below V₀ but got ionised events" outcome. The two are independent and act at different stages of the experiment: prep → measurement.
 
@@ -85,9 +87,9 @@ The Width tab compares two independently configured quantum wells in real units 
 
 ### 2.2 Effective mass
 
-**Setup.** Unlink *m*\*. A: *m*\* = 1.0 m<sub>e</sub> (free electron). B: *m*\* = 0.067 m<sub>e</sub> (GaAs-like effective mass). Linked: *L* = 1.0 nm, *V*<sub>0</sub> = 8 eV. Pick the GaAs preset from the particle menu on B.
+**Setup.** Unlink *m*\*. A: *m*\* = 1.0 m<sub>e</sub> (free electron). B: *m*\* = 0.067 m<sub>e</sub> (GaAs-like effective mass). Linked: *L* = 1.0 nm, *V*<sub>0</sub> = 8 eV. *Note:* the particle menu's lightest preset is "Light effective electron (semiconductor)" at 0.1 m<sub>e</sub> — there is no 0.067/GaAs preset, so type 0.067 into B's *m*\* field directly (or use the 0.1 preset for a slightly weaker effect).
 
-**Observe.** B's eigenvalues are ~ 15× higher than A's; B's spectrum is sparser. The wavefunctions look similar in shape but the energy ladder is dramatically different.
+**Observe.** B's spectrum is much sparser and shifted up — only ~2 bound states vs A's ~5. The underlying confinement scale *E*\* scales as 1/*m*\*, so it is ~15× larger for B; the measured *ground-state* ratio is smaller (**≈ 8×** here) because the lighter particle leaks more, pulling its finite-well *E*<sub>1</sub> further below the infinite-well value. The wavefunctions look similar in shape but the energy ladder is dramatically different.
 
 **Chemistry.** In a semiconductor, the conduction-band electron has an effective mass that can be much smaller than m<sub>e</sub>. The confinement physics is identical; only the inertia changes. This is why quantum-dot energies depend strongly on the host material.
 
@@ -119,7 +121,7 @@ The Width tab compares two independently configured quantum wells in real units 
 
 **Setup.** Unlink *m*\*. A: electron. B: muon preset (*m* ≈ 207 m<sub>e</sub>). Linked: *L*, *V*<sub>0</sub>.
 
-**Observe.** B's spectrum is compressed by roughly 200×, far more bound states fit, less leakage.
+**Observe.** B's spectrum is compressed and shifted far down: many more bound states fit (≈ 8 vs A's ≈ 5) and leakage drops. The confinement scale *E*\* compresses by the full mass ratio (~207×); the measured *ground-state* energy ratio is somewhat less (**≈ 160×** here) for the same finite-well-leakage reason as in 2.2.
 
 **Chemistry.** Muonic atoms have orbitals ~ 200× smaller than electronic atoms — same Coulomb potential, vastly different particle.
 
@@ -179,3 +181,14 @@ The Shape tab compares confining potential geometries. The shape picker offers t
 - Tab 2's six per-parameter link toggles are the comparison structure: lock the parameters you want to hold constant, vary the one you want to compare. Defaults link everything so the student starts from a same-vs-same baseline.
 - Tab 3 adds a seventh link toggle (shape itself), so even the well shape can be locked across A and B.
 - Show theory overlays the predicted distributions on every histogram; Show eigenstates marks each bound state on the energy axis and adds the |c<sub>n</sub>|² column to the bound-state table. Both are off by default so the student first sees raw simulation behaviour, then turns on theory to compare.
+
+### Preset library (`examples/`)
+
+- Every example above is saved as a ready-to-load JSON preset under `examples/`, named `<tab>_<n>_<slug>.json` (e.g. `depth_1.1_position_distribution.json`, `width_2.1_quantum_dot_size.json`, `shape_3.2_square_vs_coulomb.json`). Each was run to ~10 k measurements. The four examples best suited to offline analysis (1.4, 1.6, 2.4, 3.1) also ship a matching `.csv`.
+- `examples/convergence/` holds a **Monte-Carlo convergence exercise**: the 1.6-case-3 configuration (*V₀* = 100, Γ = 5, σ = 0, prep at the topmost bound state) exported at *N* = 1 k, 2 k, 5 k, 10 k, 20 k (`depth_conv_N01k.json` … `N20k.json`). Load them in turn and watch the *P*<sub>ion</sub> estimate settle (≈ 0.19 → 0.20) and the energy-histogram noise floor drop as *N* grows — a hands-on illustration of why these histograms need several thousand measurements before they're trustworthy.
+
+### Walkthrough gotchas (worth knowing when building presets)
+
+- **Snap-to-eigenstate** with Show eigenstates ON is the reliable way to "prep at *E*<sub>n</sub>": click the tick on the energy slider rather than typing a number. With Γ = 0 the prep collapses to the nearest eigenstate anyway, so prepping "at the topmost bound state" just means setting *E* a hair below *V*₀.
+- On Tabs 2/3, set a parameter's **link toggle first, then its A/B values** — toggling the link and changing the value in the same motion can briefly use the old link state and sync both sides unintentionally.
+- Several examples prep at the **topmost, barely-bound state** (1.3, 1.6, 3.3). That is deliberately the most leakage- and ionisation-prone case, so the measured *P*<sub>out</sub>/*P*<sub>ion</sub> magnitudes are larger than a naïve "small tail" estimate — see the per-example numbers above.

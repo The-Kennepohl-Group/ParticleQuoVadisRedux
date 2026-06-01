@@ -1159,6 +1159,14 @@ const COL = {
   accent:    '#c9a0ff',  // settings / slider accent
   danger:    '#e8745a',
   ionised:   '#e8a5b8',
+  // Overlay-only system colours. Used exclusively by the "Overlay
+  // simulations" combined panel so the A↔B pairing reads in two fixed
+  // hues regardless of which tab is active (the per-tab classical /
+  // quantum meanings of the other tokens stay intact). sysA reuses the
+  // quantum teal; sysB is a warm amber distinct from the classical
+  // orange so the two series separate cleanly when superimposed.
+  sysA:      '#7adfd0',
+  sysB:      '#f2b66d',
 };
 
 const FONTS = {
@@ -1206,6 +1214,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const [psiMode, setPsiMode] = useSavedState('redux:psiMode', 'density');
   const [showEigen, setShowEigen]   = useState(false);  // eigenstate ticks on the slider + histograms
   const [showTheory, setShowTheory] = useState(false);  // |c_n|² overlay on the quantum P(E)
+  const [showOverlay, setShowOverlay] = useState(false); // superimpose classical + quantum on one set of plots
   const [logEnergy, setLogEnergy]   = useState(false);  // log vs linear y axis on the P(E) panels
   const states = useMemo(() => findBoundStates(V0, maxBoundCap), [V0, maxBoundCap]);
 
@@ -2545,6 +2554,14 @@ function Tab1Content({ activeTab, onChangeTab }) {
                   inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
                   title="Mark each bound state E_n on the energy histogram, on the sim panel as dashed lines, and on the Energy slider as tick marks. Also adds the |c_n|² column to the bound-states table."
                 />
+                <CheckboxRow
+                  checked={showOverlay}
+                  onChange={() => setShowOverlay((b) => !b)}
+                  label="Overlay simulations"
+                  accent={COL.accent}
+                  inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+                  title="Superimpose both simulations on a single set of plots for direct comparison."
+                />
               </div>
               <div style={{ marginLeft: 'auto', textAlign: 'right', fontFamily: FONTS.mono, lineHeight: 1.1 }}>
                 <div style={{ fontSize: 22, color: COL.ink, fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
@@ -2556,7 +2573,25 @@ function Tab1Content({ activeTab, onChangeTab }) {
               </div>
         </div>{/* end transport panel */}
 
-        {/* ===== MAIN GRID — Classical | Quantum ===== */}
+        {/* ===== MAIN GRID — Classical | Quantum. When "Overlay
+             simulations" is ON, collapse to one combined panel. ===== */}
+        {showOverlay ? (
+          <Tab1OverlayRow
+            states={states} probs={probs} t={tRef.current} isIonised={isIonised}
+            energy={energy} V0={V0} eHistMax={eHistMax}
+            xHistDensity={xHistDensity} eHistDensity={eHistDensity}
+            qXHistDensity={qXHistDensity} qEHistDensity={qEHistDensity}
+            xMean={xMean} eMean={eMean} qxMean={qxMean} qeMean={qeMean}
+            qIonisedFrac={qIonisedFrac} qLeakFrac={qLeakFrac}
+            cPosTheory={showTheory ? cPosTheoryDensity : null}
+            cETheory={showTheory ? cEnergyTheoryDensity : null}
+            qPosTheory={showTheory ? qPosTheoryDensity : null}
+            qETheory={showTheory ? qEnergyTheoryDensity : null}
+            eigen={showEigen ? states : null}
+            recentX={recentXRef.current} recentE={recentERef.current}
+            qRecentX={qRecentXRef.current} qRecentE={qRecentERef.current}
+          />
+        ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
           {/* CLASSICAL — same scatter-with-marginals layout as QUANTUM.
@@ -2790,6 +2825,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
             </div>
           </section>
         </div>
+        )}
 
         {/* ===== Notes (adaptive chemistry framing) — collapsible. ===== */}
         <CollapsibleSection
@@ -6487,6 +6523,604 @@ function VerticalEnergyHistogram({
 }
 
 // =============================================================
+// OVERLAY SIMULATIONS — combined A↔B comparison panel
+// =============================================================
+//
+// Presentation-only. When "Overlay simulations" is ON, each tab's two
+// side-by-side panels collapse into ONE full-width panel that
+// superimposes both systems' wells, |ψ|², dot streams, position and
+// energy histograms, plus a compact A/B comparison table. The
+// simulation engine, controls, and exported data are untouched; these
+// components only consume data that the tabs already compute.
+//
+// Geometry mirrors the per-system panels (sim 480×240, energy 130×240,
+// position 480×200) so the combined 2×2 grid (1fr / 130px) lines up
+// pixel-for-pixel with the layout it replaces.
+
+// Stepped envelope of a position histogram (engine bins over the fixed
+// [X_PLOT_MIN, X_PLOT_MAX] window). Returns a line path tracing bin
+// tops and a fill path sealed to the baseline — the overlaid-histogram
+// look, far more legible than two sets of opaque bars.
+function buildPosStepPaths(histArr, xScaleFn, yScaleFn, axisY) {
+  const NB = histArr.length;
+  if (!NB) return null;
+  let line = '';
+  for (let i = 0; i < NB; i++) {
+    const xs0 = X_PLOT_MIN + (i / NB) * X_PLOT_RANGE;
+    const xs1 = X_PLOT_MIN + ((i + 1) / NB) * X_PLOT_RANGE;
+    const X0 = xScaleFn(xs0).toFixed(2);
+    const X1 = xScaleFn(xs1).toFixed(2);
+    const Y = yScaleFn(histArr[i]).toFixed(2);
+    line += (i === 0 ? `M${X0},${Y}` : ` L${X0},${Y}`) + ` L${X1},${Y}`;
+  }
+  const firstX = xScaleFn(X_PLOT_MIN).toFixed(2);
+  const lastX = xScaleFn(X_PLOT_MAX).toFixed(2);
+  const a = axisY.toFixed(2);
+  return { line, fill: `${line} L${lastX},${a} L${firstX},${a} Z` };
+}
+
+// Stepped envelope of an energy histogram, rotated 90°: bars grow left
+// from axisX, the trace runs up the energy axis. ownMax is the per-
+// system energy bin-max (each system was binned against its own
+// eHistMaxEv); the shared display axis is handled by yScaleFn.
+function buildEnergyStepPaths(histArr, ownMax, xScaleFn, yScaleFn, axisX) {
+  const NB = histArr.length;
+  if (!NB) return null;
+  let line = '';
+  for (let i = 0; i < NB; i++) {
+    const E0 = (ownMax * i) / NB;
+    const E1 = (ownMax * (i + 1)) / NB;
+    const X = xScaleFn(histArr[i]).toFixed(2);
+    const Y0 = yScaleFn(E0).toFixed(2);
+    const Y1 = yScaleFn(E1).toFixed(2);
+    line += (i === 0 ? `M${X},${Y0}` : ` L${X},${Y0}`) + ` L${X},${Y1}`;
+  }
+  const a = axisX.toFixed(2);
+  const firstY = yScaleFn(0).toFixed(2);
+  const lastY = yScaleFn(ownMax).toFixed(2);
+  return { line, fill: `${line} L${a},${lastY} L${a},${firstY} Z` };
+}
+
+// |ψ|² density path for a finite-square bundle (Tab 1 / Tab 2). Samples
+// densityAt over the engine range that the panel's x-mapping covers,
+// anchored at the bundle's prep energy. Returns '' when there's nothing
+// to draw (ionised, no bound states, or zero density).
+function squareDensityPath(bundle, xToPx, anchorY, ampMax, sampleEngMin, sampleEngMax) {
+  if (bundle.isIonised || !bundle.states || bundle.states.length === 0) return '';
+  const N = DENSITY_GRID_N;
+  const range = sampleEngMax - sampleEngMin;
+  const dens = new Float64Array(N);
+  let dMax = 0;
+  for (let i = 0; i < N; i++) {
+    const xs = sampleEngMin + (range * i) / (N - 1);
+    dens[i] = densityAt(bundle.states, bundle.probs, xs, bundle.t);
+    if (dens[i] > dMax) dMax = dens[i];
+  }
+  if (dMax <= 0) return '';
+  let path = '';
+  for (let i = 0; i < N; i++) {
+    const xs = sampleEngMin + (range * i) / (N - 1);
+    const X = xToPx(xs).toFixed(2);
+    const Y = (anchorY - ampMax * (dens[i] / dMax)).toFixed(2);
+    path += (i === 0 ? `M${X},${anchorY.toFixed(2)} L${X},${Y}` : ` L${X},${Y}`);
+  }
+  path += ` L${xToPx(sampleEngMax).toFixed(2)},${anchorY.toFixed(2)} Z`;
+  return path;
+}
+
+// |ψ|² density path for a shape-aware bundle (Tab 3). Samples
+// densityAtTab3 on the FD grid (already in nm, centred at 0).
+function shapeDensityPath(bundle, xToPxNm, anchorY, ampMax) {
+  const g = bundle.xGrid_nm;
+  const N = g ? g.length : 0;
+  if (bundle.isIonised || !bundle.states || bundle.states.length === 0 || N < 2) return '';
+  const dens = new Float64Array(N);
+  let dMax = 0;
+  for (let i = 0; i < N; i++) {
+    dens[i] = densityAtTab3(bundle.states, bundle.probs, g[i], bundle.t, g);
+    if (dens[i] > dMax) dMax = dens[i];
+  }
+  if (dMax <= 0) return '';
+  let path = '';
+  for (let i = 0; i < N; i++) {
+    const X = xToPxNm(g[i]).toFixed(2);
+    const Y = (anchorY - ampMax * (dens[i] / dMax)).toFixed(2);
+    path += (i === 0 ? `M${X},${anchorY.toFixed(2)} L${X},${Y}` : ` L${X},${Y}`);
+  }
+  path += ` L${xToPxNm(g[N - 1]).toFixed(2)},${anchorY.toFixed(2)} Z`;
+  return path;
+}
+
+// Shape-aware potential outline (Tab 3): trace V_eV vs xGrid_nm, V
+// clamped to v0 so the dashed ceiling stays the visible well top.
+function shapePotentialPath(bundle, xToPxNm, floorY, ceilY) {
+  const g = bundle.xGrid_nm, V = bundle.V_eV, v0 = bundle.v0;
+  if (!g || g.length === 0) return '';
+  let p = '';
+  for (let i = 0; i < g.length; i++) {
+    const xPx = xToPxNm(g[i]);
+    const Vc = Math.min(V[i], v0);
+    const yFrac = v0 > 0 ? Vc / v0 : 0;
+    const yPx = floorY - yFrac * (floorY - ceilY);
+    p += (i === 0 ? 'M' : ' L') + xPx.toFixed(2) + ',' + yPx.toFixed(2);
+  }
+  return p;
+}
+
+// ---------- Combined simulation view: finite-square wells (Tab 1/2) ----------
+function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, engineMode, wall, bg, ionisedCol, mono }) {
+  const W = 480, H = 240, PAD_L = 60, PAD_R = 4, INNER_W = W - PAD_L - PAD_R;
+  const topPad = 4, floorY = H - 4;
+  const nmShared = !engineMode && !normalize;
+  function yForE(E) {
+    if (!Number.isFinite(E)) return floorY;
+    const f = Math.max(0, Math.min(1, E / eHistMax));
+    return floorY - f * (floorY - topPad);
+  }
+  function makeXToPx(lengthNm) {
+    if (!nmShared) return (xEng) => PAD_L + ((xEng - X_PLOT_MIN) / X_PLOT_RANGE) * INNER_W;
+    const xRangeNm = xMaxNm - xMinNm;
+    const centerNm = (xMinNm + xMaxNm) / 2;
+    const leftOff = centerNm - lengthNm / 2;
+    return (xEng) => PAD_L + ((leftOff + xEng * lengthNm - xMinNm) / xRangeNm) * INNER_W;
+  }
+  return (
+    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
+      style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY} stroke={wall} strokeWidth={1.2} opacity={0.4} />
+      {bundles.map((b, bi) => {
+        const xToPx = makeXToPx(b.lengthNm);
+        const ceilY = yForE(b.v0);
+        const wallLeftX = xToPx(0), wallRightX = xToPx(L);
+        const anchorY = yForE(Number.isFinite(b.eSet) ? b.eSet : b.v0 / 2);
+        const ampMax = Math.max(0, Math.min(70, anchorY - topPad - 4));
+        let sMin, sMax;
+        if (!nmShared) { sMin = X_PLOT_MIN; sMax = X_PLOT_MAX; }
+        else {
+          const centerNm = (xMinNm + xMaxNm) / 2;
+          const leftOff = centerNm - b.lengthNm / 2;
+          sMin = (xMinNm - leftOff) / b.lengthNm;
+          sMax = (xMaxNm - leftOff) / b.lengthNm;
+        }
+        const dPath = squareDensityPath(b, xToPx, anchorY, ampMax, sMin, sMax);
+        return (
+          <g key={bi}>
+            {!b.classical && (
+              <path d={`M${PAD_L},${ceilY} L${wallLeftX.toFixed(2)},${ceilY} L${wallLeftX.toFixed(2)},${floorY} L${wallRightX.toFixed(2)},${floorY} L${wallRightX.toFixed(2)},${ceilY} L${PAD_L + INNER_W},${ceilY}`}
+                fill="none" stroke={b.col} strokeWidth={2} strokeLinejoin="round" opacity={0.55} />
+            )}
+            {!b.classical && Number.isFinite(b.eSet) && (
+              <line x1={PAD_L} x2={PAD_L + INNER_W} y1={anchorY} y2={anchorY}
+                stroke={b.col} strokeWidth={1} strokeDasharray="2 4" opacity={0.4} />
+            )}
+            {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
+            {b.recent && b.recent.map((m, i) => {
+              const op = Math.max(0, 1 - m.age / FLASH_AGE);
+              const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+              const E = Number.isFinite(m.E) ? m.E : (Number.isFinite(b.eSet) ? b.eSet : 0);
+              return <circle key={i} cx={xToPx(m.x)} cy={yForE(E)} r={rr} fill={b.col} opacity={op * 0.8} />;
+            })}
+            {b.isIonised && (
+              <text x={W / 2} y={12 + bi * 14} textAnchor="middle" fill={ionisedCol} fontFamily={mono} fontSize={11}>
+                {b.label} ionised
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ---------- Combined simulation view: shape-aware wells (Tab 3) ----------
+function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, wall, bg, ionisedCol, mono }) {
+  const W = 480, H = 240, PAD_L = 60, PAD_R = 4, INNER_W = W - PAD_L - PAD_R;
+  const topPad = 4, floorY = H - 4, MARGIN = 0.3;
+  function yForE(E) {
+    if (!Number.isFinite(E)) return floorY;
+    const f = Math.max(0, Math.min(1, E / eHistMax));
+    return floorY - f * (floorY - topPad);
+  }
+  function makeXToPx(lengthNm) {
+    let wMin, wMax;
+    if (normalize) { wMin = -(lengthNm / 2 + MARGIN * lengthNm); wMax = +(lengthNm / 2 + MARGIN * lengthNm); }
+    else { wMin = xMinNm; wMax = xMaxNm; }
+    const r = wMax - wMin;
+    return (xNm) => PAD_L + ((xNm - wMin) / r) * INNER_W;
+  }
+  return (
+    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
+      style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
+      <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY} stroke={wall} strokeWidth={1.2} opacity={0.4} />
+      {bundles.map((b, bi) => {
+        const xToPx = makeXToPx(b.lengthNm);
+        const ceilY = yForE(b.v0);
+        const anchorY = yForE(Number.isFinite(b.eSet) ? b.eSet : b.v0 / 2);
+        const ampMax = Math.max(0, Math.min(70, anchorY - topPad - 4));
+        const potP = shapePotentialPath(b, xToPx, floorY, ceilY);
+        const dPath = shapeDensityPath(b, xToPx, anchorY, ampMax);
+        return (
+          <g key={bi}>
+            {potP && <path d={potP} fill="none" stroke={b.col} strokeWidth={2} strokeLinejoin="round" opacity={0.55} />}
+            {Number.isFinite(b.eSet) && (
+              <line x1={PAD_L} x2={PAD_L + INNER_W} y1={anchorY} y2={anchorY}
+                stroke={b.col} strokeWidth={1} strokeDasharray="2 4" opacity={0.4} />
+            )}
+            {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
+            {b.recent && b.recent.map((m, i) => {
+              const op = Math.max(0, 1 - m.age / FLASH_AGE);
+              const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+              const xNm = (m.x - 0.5) * b.lengthNm;
+              return <circle key={i} cx={xToPx(xNm)} cy={yForE(Number.isFinite(m.E) ? m.E : 0)} r={rr} fill={b.col} opacity={op * 0.8} />;
+            })}
+            {b.isIonised && (
+              <text x={W / 2} y={12 + bi * 14} textAnchor="middle" fill={ionisedCol} fontFamily={mono} fontSize={11}>
+                {b.label} ionised
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ---------- Combined energy histogram (both series on a shared eV axis) ----------
+function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono }) {
+  void ink;
+  const W = 130, H = 240, PAD = { l: 4, r: 34, t: 4, b: 4 };
+  const innerW = W - PAD.l - PAD.r, innerH = H - PAD.t - PAD.b;
+  const axisX = PAD.l + innerW, baseX = PAD.l;
+  let dataMax = 0;
+  bundles.forEach((b) => b.hist.forEach((v) => { if (v > dataMax) dataMax = v; }));
+  const linXMax = Math.max(dataMax, 0.005) * 1.25;
+  function yScale(E) { return PAD.t + innerH - Math.max(0, Math.min(1, E / eDisplayMax)) * innerH; }
+  function xScale(d) { return axisX - Math.min(1, d / linXMax) * innerW; }
+  const yTicks = [0, eDisplayMax * 0.25, eDisplayMax * 0.5, eDisplayMax * 0.75, eDisplayMax];
+  return (
+    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+      <defs><clipPath id="ovEnergyClip"><rect x={baseX} y={PAD.t} width={innerW} height={innerH} /></clipPath></defs>
+      <line x1={axisX} x2={axisX} y1={PAD.t} y2={PAD.t + innerH} stroke={rule} strokeWidth={1.5} />
+      {yTicks.map((tE, i) => {
+        const tY = yScale(tE);
+        if (tY < PAD.t + 12 || tY > H - PAD.b - 4) return null;
+        const label = tE === 0 ? '0' : tE < 10 ? tE.toFixed(1) : Math.round(tE).toString();
+        return (
+          <g key={i}>
+            <line x1={axisX} x2={axisX + 3} y1={tY} y2={tY} stroke={rule} strokeWidth={1} />
+            <text x={axisX + 5} y={tY + 3} textAnchor="start" fill={inkDim} fontSize={10} fontFamily={mono}>{label}</text>
+          </g>
+        );
+      })}
+      <g clipPath="url(#ovEnergyClip)">
+        {bundles.map((b, bi) => {
+          const sp = buildEnergyStepPaths(b.hist, b.eHistMaxOwn, xScale, yScale, axisX);
+          if (!sp) return null;
+          return (
+            <g key={bi}>
+              <path d={sp.fill} fill={b.col} fillOpacity={0.25} stroke="none" />
+              <path d={sp.line} fill="none" stroke={b.col} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+            </g>
+          );
+        })}
+        {bundles.map((b, bi) => {
+          if (!b.theory) return null;
+          const segs = [];
+          const draw = (curve, eLo, eHi) => {
+            if (!curve || curve.length === 0) return;
+            const pts = curve.filter((p) => p.E >= eLo && p.E <= eHi).sort((a, c) => a.E - c.E);
+            if (!pts.length) return;
+            segs.push(pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${xScale(p.d).toFixed(2)},${yScale(p.E).toFixed(2)}`).join(' '));
+          };
+          draw(b.theory.bound, 0, b.v0);
+          draw(b.theory.continuum, b.v0, eDisplayMax);
+          return segs.map((d, i) => (
+            <path key={`${bi}-${i}`} d={d} fill="none" stroke={b.col} strokeWidth={1.4}
+              strokeDasharray="3 3" opacity={0.85} vectorEffect="non-scaling-stroke" />
+          ));
+        })}
+      </g>
+      {bundles.map((b, bi) => {
+        const y = yScale(b.v0);
+        return <line key={bi} x1={baseX} x2={axisX} y1={y} y2={y} stroke={b.col} strokeWidth={1.2} strokeDasharray="3 4" opacity={0.6} />;
+      })}
+      {bundles.map((b, bi) => b.eigen && b.eigen.map((s, i) => {
+        const E = s.E;
+        if (E < 0 || E > eDisplayMax) return null;
+        const tY = yScale(E);
+        return <line key={`${bi}-${i}`} x1={baseX - 2} x2={baseX + 4} y1={tY} y2={tY} stroke={b.col} strokeWidth={1.5} opacity={0.85} />;
+      }))}
+      {bundles.map((b, bi) => b.recent && b.recent.map((m, i) => {
+        const tY = yScale(m.E);
+        const op = Math.max(0, 1 - m.age / FLASH_AGE);
+        return <line key={`${bi}-${i}`} x1={axisX - 4} x2={axisX + 4} y1={tY} y2={tY} stroke={b.col} strokeWidth={2.5} opacity={op} />;
+      }))}
+      <text x={axisX + 5} y={PAD.t + 9} textAnchor="start" fontSize={11} fontFamily={mono} fontStyle="italic" fill={inkDim}>P(E)</text>
+    </svg>
+  );
+}
+
+// ---------- Combined position histogram (both series on a shared x-axis) ----------
+function OverlayPositionHistogram({ bundles, xMinNm, xMaxNm, normalize, engineMode, inkDim, rule, mono, centredX }) {
+  const W = 480, H = 200, PAD = { l: 60, r: 4, t: 4, b: 34 };
+  const innerW = W - PAD.l - PAD.r, innerH = H - PAD.t - PAD.b;
+  const axisY = PAD.t + innerH;
+  const nmShared = !engineMode && !normalize;
+  let histMax = 0;
+  bundles.forEach((b) => b.hist.forEach((v) => { if (v > histMax) histMax = v; }));
+  bundles.forEach((b) => { if (b.theory) b.theory.forEach((p) => { if (p.d > histMax) histMax = p.d; }); });
+  const yMax = Math.max(histMax, 0.5) * 1.25;
+  function yScale(v) { return PAD.t + innerH - Math.min(1, v / yMax) * innerH; }
+  function makeXToPx(lengthNm) {
+    if (!nmShared) return (xEng) => PAD.l + ((xEng - X_PLOT_MIN) / X_PLOT_RANGE) * innerW;
+    const xRangeNm = xMaxNm - xMinNm;
+    const centerNm = (xMinNm + xMaxNm) / 2;
+    const leftOff = centerNm - lengthNm / 2;
+    return (xEng) => PAD.l + ((leftOff + xEng * lengthNm - xMinNm) / xRangeNm) * innerW;
+  }
+  const xPct = (xVB) => `${(xVB / W) * 100}%`;
+  // Axis ticks. nm-shared mode labels the window edges + centre in nm
+  // relative to the well centre (so the midline reads 0); engine /
+  // normalized mode labels engine 0 / ½ / 1 with the centred-x scheme.
+  let ticks;
+  if (nmShared) {
+    const center = (xMinNm + xMaxNm) / 2;
+    const fmt = (d) => {
+      if (Math.abs(d) < 1e-6) return '0';
+      const t = `${Math.abs(d) < 1 ? d.toFixed(2) : d.toFixed(1)} nm`;
+      return d > 0 ? `+${t}` : t;
+    };
+    ticks = [xMinNm, center, xMaxNm].map((nm) => ({
+      px: PAD.l + ((nm - xMinNm) / (xMaxNm - xMinNm)) * innerW,
+      label: fmt(nm - center),
+    }));
+  } else {
+    const x0 = makeXToPx(bundles[0].lengthNm);
+    ticks = [0, 0.5, 1].map((t) => ({
+      px: x0(t),
+      label: centredX ? (t === 0 ? '−L/2' : t === 1 ? '+L/2' : '0') : (t === 0 ? '0' : t === 1 ? 'L' : 'L/2'),
+    }));
+  }
+  return (
+    <div style={{ position: 'relative', width: '100%', height: H }}>
+      <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+        <defs><clipPath id="ovPosClip"><rect x={PAD.l} y={PAD.t} width={innerW} height={innerH} /></clipPath></defs>
+        <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={axisY} stroke={rule} strokeWidth={1.5} />
+        <line x1={PAD.l} x2={PAD.l + innerW} y1={axisY} y2={axisY} stroke={rule} strokeWidth={1.5} />
+        <g clipPath="url(#ovPosClip)">
+          {bundles.map((b, bi) => {
+            const xToPx = makeXToPx(b.lengthNm);
+            const sp = buildPosStepPaths(b.hist, xToPx, yScale, axisY);
+            if (!sp) return null;
+            return (
+              <g key={bi}>
+                <path d={sp.fill} fill={b.col} fillOpacity={0.25} stroke="none" />
+                <path d={sp.line} fill="none" stroke={b.col} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
+              </g>
+            );
+          })}
+          {bundles.map((b, bi) => {
+            if (!b.theory) return null;
+            const xToPx = makeXToPx(b.lengthNm);
+            const line = b.theory.map((p, i) => `${i === 0 ? 'M' : 'L'}${xToPx(p.x).toFixed(2)},${yScale(p.d).toFixed(2)}`).join(' ');
+            return <path key={bi} d={line} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.85} vectorEffect="non-scaling-stroke" />;
+          })}
+        </g>
+        {bundles.map((b, bi) => {
+          const xToPx = makeXToPx(b.lengthNm);
+          return b.recent && b.recent.map((m, i) => {
+            const X = xToPx(m.x);
+            if (X < PAD.l || X > PAD.l + innerW) return null;
+            const op = Math.max(0, 1 - m.age / FLASH_AGE);
+            return <line key={`${bi}-${i}`} x1={X} x2={X} y1={PAD.t} y2={PAD.t + 9} stroke={b.col} strokeWidth={2.5} opacity={op} />;
+          });
+        })}
+        {ticks.map((tk, i) => (
+          <line key={`tk${i}`} x1={tk.px} x2={tk.px} y1={axisY} y2={axisY + 5} stroke={rule} strokeWidth={1.5} />
+        ))}
+      </svg>
+      <div style={{
+        position: 'absolute', top: PAD.t + 1, left: 0, width: xPct(PAD.l - 4),
+        textAlign: 'right', fontFamily: mono, fontSize: 10, fontStyle: 'italic',
+        color: inkDim, lineHeight: 1, pointerEvents: 'none',
+      }}>P(x)</div>
+      {ticks.map((tk, i) => (
+        <div key={`hl${i}`} style={{
+          position: 'absolute', top: axisY + 7, left: xPct(tk.px), transform: 'translateX(-50%)',
+          fontFamily: mono, fontSize: 10, color: inkDim, whiteSpace: 'nowrap', lineHeight: 1, pointerEvents: 'none',
+        }}>{tk.label}</div>
+      ))}
+      <div style={{
+        position: 'absolute', top: axisY + 21, left: xPct(PAD.l + innerW / 2), transform: 'translateX(-50%)',
+        fontFamily: mono, fontSize: 11, fontStyle: 'italic', color: inkDim, lineHeight: 1, pointerEvents: 'none',
+      }}>x</div>
+    </div>
+  );
+}
+
+// ---------- Compact A/B comparison table ----------
+function OverlayComparisonSummary({ a, b, ink, inkDim, mono }) {
+  const rows = [
+    { label: 'bound', title: 'Number of bound states each well supports at the current V₀, m*, L. Deeper, narrower, lighter-particle wells host more bound states.', get: (s) => s.nBound, plain: true },
+    { label: '⟨x⟩', title: 'Sample mean of measured position, centred at the well midpoint. Symmetric superpositions give ⟨x⟩ ≈ 0; asymmetric prep shifts it.', get: (s) => s.meanX },
+    { label: '⟨E⟩', title: 'Sample mean of measured energy. Converges to Σ |c_n|² E_n plus the continuum tail; close to but not exactly E_set when Γ > 0.', get: (s) => s.meanE },
+    { label: 'Pout', title: 'Fraction of position measurements that fell outside the well — nonzero because ψ has exponentially decaying tails past the walls.', get: (s) => s.pOut },
+    { label: 'Pion', title: 'Fraction of energy measurements above V₀ (ionised events). Nonzero when the prep Lorentzian tail extends past V₀.', get: (s) => s.pIon, ion: true },
+  ];
+  const cell = { fontVariantNumeric: 'tabular-nums', textAlign: 'center' };
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '4px 0' }}>
+      <div style={{
+        fontFamily: mono, fontSize: 11, color: inkDim, lineHeight: 1.5,
+        display: 'grid', gridTemplateColumns: 'auto auto auto', columnGap: 10, rowGap: 2,
+      }}>
+        <div />
+        <div style={{ ...cell, color: a.col, fontWeight: 600 }}>{a.label}</div>
+        <div style={{ ...cell, color: b.col, fontWeight: 600 }}>{b.label}</div>
+        {rows.map((r, i) => {
+          const aColor = r.plain ? ink : (r.ion ? (a.ionised ? COL.ionised : inkDim) : a.col);
+          const bColor = r.plain ? ink : (r.ion ? (b.ionised ? COL.ionised : inkDim) : b.col);
+          return (
+            <React.Fragment key={i}>
+              <div style={{ textAlign: 'right', cursor: 'help' }} title={r.title}>
+                {r.label.startsWith('P') ? <>P<span style={{ fontSize: 9 }}>{r.label.slice(1)}</span>:</> : `${r.label}:`}
+              </div>
+              <div style={{ ...cell, color: aColor }}>{r.get(a)}</div>
+              <div style={{ ...cell, color: bColor }}>{r.get(b)}</div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Header strip shared by every overlay panel ----------
+function OverlayPanelHeader({ aLabel, bLabel, aCol, bCol, normalize, setNormalize }) {
+  const dot = (c) => ({ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: c, marginRight: 5, verticalAlign: 'middle' });
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
+        <PanelHeader tag="Overlay" color={COL.accent}
+          title="Both systems superimposed on one set of plots for direct comparison. Toggle off to return to the side-by-side view." />
+        <div style={{ fontFamily: FONTS.mono, fontSize: 12, color: COL.inkDim }}>
+          <span style={dot(aCol)} />{aLabel}
+          <span style={{ ...dot(bCol), marginLeft: 12 }} />{bLabel}
+        </div>
+      </div>
+      {setNormalize && (
+        <SegmentedToggle
+          value={normalize ? 'norm' : 'scale'}
+          onChange={(v) => setNormalize(v === 'norm')}
+          options={[{ value: 'scale', label: 'To scale' }, { value: 'norm', label: 'Normalize widths' }]}
+          accent={COL.accent} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- Per-tab overlay rows ----------
+// Tab 1: classical (amber) vs quantum (teal) in one shared well, engine
+// units. No "To scale / Normalize" control (single well).
+function Tab1OverlayRow(p) {
+  const eDisp = p.eHistMax;
+  const simBundles = [
+    { classical: true, label: 'Classical', col: COL.classical, lengthNm: 1, v0: p.V0, eSet: p.energy, recent: p.recentX },
+    { label: 'Quantum', col: COL.quantum, lengthNm: 1, v0: p.V0, eSet: p.energy, states: p.states, probs: p.probs, t: p.t, isIonised: p.isIonised, recent: p.qRecentX },
+  ];
+  const energyBundles = [
+    { col: COL.classical, hist: p.eHistDensity, eHistMaxOwn: eDisp, v0: p.V0, theory: p.cETheory, eigen: null, recent: p.recentE },
+    { col: COL.quantum, hist: p.qEHistDensity, eHistMaxOwn: eDisp, v0: p.V0, theory: p.qETheory, eigen: p.eigen, recent: p.qRecentE },
+  ];
+  const posBundles = [
+    { col: COL.classical, hist: p.xHistDensity, lengthNm: 1, theory: p.cPosTheory, recent: p.recentX },
+    { col: COL.quantum, hist: p.qXHistDensity, lengthNm: 1, theory: p.qPosTheory, recent: p.qRecentX },
+  ];
+  const fmtL = (m) => (m !== null && m !== undefined) ? `${(m - 0.5).toFixed(2)} L` : '—';
+  const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(1) : '—';
+  const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
+  const a = { label: 'Classical', col: COL.classical, nBound: '—', meanX: fmtL(p.xMean), meanE: fmtE(p.eMean), pOut: '0%', pIon: '0%', ionised: false };
+  const b = { label: 'Quantum', col: COL.quantum, nBound: String(p.states.length), meanX: fmtL(p.qxMean), meanE: fmtE(p.qeMean), pOut: fmtPctV(p.qLeakFrac), pIon: fmtPctV(p.qIonisedFrac), ionised: p.qIonisedFrac > 0.01 };
+  return (
+    <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <OverlayPanelHeader aLabel="Classical" bLabel="Quantum" aCol={COL.classical} bCol={COL.quantum} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} engineMode={true}
+          wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
+        <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayPositionHistogram bundles={posBundles} engineMode={true} centredX={true}
+          inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayComparisonSummary a={a} b={b} ink={COL.ink} inkDim={COL.inkDim} mono={FONTS.mono} />
+      </div>
+    </section>
+  );
+}
+
+// Tab 2: System A vs System B, finite-square wells in nm. "To scale"
+// draws both wells at their true relative widths on a shared centred
+// axis; "Normalize widths" rescales each to fill the panel equally.
+function Tab2OverlayRow(p) {
+  const eDisp = Math.max(p.eHistMaxEvA, p.eHistMaxEvB);
+  const norm = p.overlayNormalize;
+  const simBundles = [
+    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA },
+    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB },
+  ];
+  const energyBundles = [
+    { col: COL.sysA, hist: p.qEHistDensityA, eHistMaxOwn: p.eHistMaxEvA, v0: p.v0A, theory: p.qETheoryA, eigen: p.eigenA, recent: p.qRecentEA },
+    { col: COL.sysB, hist: p.qEHistDensityB, eHistMaxOwn: p.eHistMaxEvB, v0: p.v0B, theory: p.qETheoryB, eigen: p.eigenB, recent: p.qRecentEB },
+  ];
+  const posBundles = [
+    { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA },
+    { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB },
+  ];
+  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${((m - 0.5) * len).toFixed(2)} nm` : '—';
+  const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(2) : '—';
+  const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
+  const a = { label: 'A', col: COL.sysA, nBound: String(p.statesA.length), meanX: fmtNm(p.qxMeanA, p.lengthA), meanE: fmtE(p.qeMeanA), pOut: fmtPctV(p.qLeakFracA), pIon: fmtPctV(p.qIonisedFracA), ionised: p.qIonisedFracA > 0.01 };
+  const b = { label: 'B', col: COL.sysB, nBound: String(p.statesB.length), meanX: fmtNm(p.qxMeanB, p.lengthB), meanE: fmtE(p.qeMeanB), pOut: fmtPctV(p.qLeakFracB), pIon: fmtPctV(p.qIonisedFracB), ionised: p.qIonisedFracB > 0.01 };
+  return (
+    <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <OverlayPanelHeader aLabel="System A" bLabel="System B" aCol={COL.sysA} bCol={COL.sysB}
+        normalize={norm} setNormalize={p.setOverlayNormalize} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} normalize={norm}
+          xMinNm={p.xMinNm} xMaxNm={p.xMaxNm} wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
+        <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayPositionHistogram bundles={posBundles} normalize={norm} centredX={true}
+          xMinNm={p.xMinNm} xMaxNm={p.xMaxNm} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayComparisonSummary a={a} b={b} ink={COL.ink} inkDim={COL.inkDim} mono={FONTS.mono} />
+      </div>
+    </section>
+  );
+}
+
+// Tab 3: System A vs System B, possibly different confining-potential
+// shapes. Shape-aware sim view traces each V(x); shared eV axis carries
+// both energy ladders.
+function Tab3OverlayRow(p) {
+  const eDisp = Math.max(p.eHistMaxEvA, p.eHistMaxEvB);
+  const norm = p.overlayNormalize;
+  const simBundles = [
+    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, xGrid_nm: p.xGridA, V_eV: p.vEvA },
+    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, xGrid_nm: p.xGridB, V_eV: p.vEvB },
+  ];
+  const energyBundles = [
+    { col: COL.sysA, hist: p.qEHistDensityA, eHistMaxOwn: p.eHistMaxEvA, v0: p.v0A, theory: p.qETheoryA, eigen: p.eigenA, recent: p.qRecentEA },
+    { col: COL.sysB, hist: p.qEHistDensityB, eHistMaxOwn: p.eHistMaxEvB, v0: p.v0B, theory: p.qETheoryB, eigen: p.eigenB, recent: p.qRecentEB },
+  ];
+  const posBundles = [
+    { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA },
+    { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB },
+  ];
+  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${((m - 0.5) * len).toFixed(2)} nm` : '—';
+  const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(2) : '—';
+  const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
+  const a = { label: 'A', col: COL.sysA, nBound: String(p.statesA.length), meanX: fmtNm(p.qxMeanA, p.lengthA), meanE: fmtE(p.qeMeanA), pOut: fmtPctV(p.qLeakFracA), pIon: fmtPctV(p.qIonisedFracA), ionised: p.qIonisedFracA > 0.01 };
+  const b = { label: 'B', col: COL.sysB, nBound: String(p.statesB.length), meanX: fmtNm(p.qxMeanB, p.lengthB), meanE: fmtE(p.qeMeanB), pOut: fmtPctV(p.qLeakFracB), pIon: fmtPctV(p.qIonisedFracB), ionised: p.qIonisedFracB > 0.01 };
+  const xMinNm = Math.min(p.xMinNmA, p.xMinNmB);
+  const xMaxNm = Math.max(p.xMaxNmA, p.xMaxNmB);
+  return (
+    <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <OverlayPanelHeader aLabel="System A" bLabel="System B" aCol={COL.sysA} bCol={COL.sysB}
+        normalize={norm} setNormalize={p.setOverlayNormalize} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
+        <OverlayShapeSimView bundles={simBundles} eHistMax={eDisp} normalize={norm}
+          xMinNm={xMinNm} xMaxNm={xMaxNm} wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
+        <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayPositionHistogram bundles={posBundles} normalize={norm} centredX={true}
+          xMinNm={xMinNm} xMaxNm={xMaxNm} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
+        <OverlayComparisonSummary a={a} b={b} ink={COL.ink} inkDim={COL.inkDim} mono={FONTS.mono} />
+      </div>
+    </section>
+  );
+}
+
+// =============================================================
 // TAB BAR
 // =============================================================
 //
@@ -7745,6 +8379,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
   const [running,    setRunning]    = useState(false);
   const [showEigen,  setShowEigen]  = useState(false);
   const [showTheory, setShowTheory] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(false);       // superimpose A + B on one set of plots
+  const [overlayNormalize, setOverlayNormalize] = useState(false); // overlay: rescale each well to fill equally
   const [psiModeA,   setPsiModeA]   = useSavedState('redux:tab2.A.psiMode', 'density');
   const [psiModeB,   setPsiModeB]   = useSavedState('redux:tab2.B.psiMode', 'density');
   const [logEnergy,  setLogEnergy]  = useState(false);
@@ -8908,6 +9544,14 @@ function Tab2Content({ activeTab, onChangeTab }) {
               inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
               title="Mark each bound state E_n on the energy histograms, the sim panels (as dashed guidelines), the Energy sliders (as snap ticks). Also adds the |c_n|² column to the bound-states tables. Linked-energy mode then pairs A and B by n rather than absolute E."
             />
+            <CheckboxRow
+              checked={showOverlay}
+              onChange={() => setShowOverlay((b) => !b)}
+              label="Overlay simulations"
+              accent={COL.accent}
+              inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+              title="Superimpose both simulations on a single set of plots for direct comparison."
+            />
           </div>
           <div style={{ flex: 1, textAlign: 'right' }}>
             <div style={{
@@ -8927,7 +9571,31 @@ function Tab2Content({ activeTab, onChangeTab }) {
 
         {/* ===== Sim row (A | B) — scatter-with-marginals layout for
              each system. Each panel takes its own scatter-with-marginals
-             2 × 2 grid (sim + vertical EH + compact PH + Summary). ===== */}
+             2 × 2 grid (sim + vertical EH + compact PH + Summary). When
+             "Overlay simulations" is ON the two panels collapse into one
+             combined panel (Tab2OverlayRow). ===== */}
+        {showOverlay ? (
+          <Tab2OverlayRow
+            overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
+            lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
+            energyA={energyA} energyB={energyB}
+            statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
+            tA={tARef.current} tB={tBRef.current}
+            isIonisedA={isIonisedA} isIonisedB={isIonisedB}
+            qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
+            qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
+            qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
+            qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+            qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
+            qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
+            qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
+            qPosTheoryA={showTheory ? qPosTheoryA : null} qPosTheoryB={showTheory ? qPosTheoryB : null}
+            qETheoryA={showTheory ? qEnergyTheoryA : null} qETheoryB={showTheory ? qEnergyTheoryB : null}
+            eigenA={showEigen ? eigenStatesEvA : null} eigenB={showEigen ? eigenStatesEvB : null}
+            eHistMaxEvA={eHistMaxEvA} eHistMaxEvB={eHistMaxEvB}
+            xMinNm={xMinNm} xMaxNm={xMaxNm}
+          />
+        ) : (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch' }}>
           <Tab2SystemPanel section="sim"
             label="A"
@@ -8972,6 +9640,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
         </div>
+        )}
 
         {/* ===== Notes (adaptive A vs B framing) — collapsible. ===== */}
         <CollapsibleSection
@@ -9138,6 +9807,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [running,    setRunning]    = useState(false);
   const [showEigen,  setShowEigen]  = useState(false);
   const [showTheory, setShowTheory] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(false);       // superimpose A + B on one set of plots
+  const [overlayNormalize, setOverlayNormalize] = useState(false); // overlay: rescale each well to fill equally
   const [psiModeA,   setPsiModeA]   = useSavedState('redux:tab3.A.psiMode', 'density');
   const [psiModeB,   setPsiModeB]   = useSavedState('redux:tab3.B.psiMode', 'density');
   const [, setTick] = useState(0);
@@ -10197,6 +10868,14 @@ function Tab3Content({ activeTab, onChangeTab }) {
             inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
             title="Mark each bound state E_n on the energy histograms, the sim panels (as dashed guidelines), the Energy sliders (as snap ticks). Also adds the |c_n|² column to the bound-states tables. Linked-energy mode then pairs A and B by n rather than absolute E."
           />
+          <CheckboxRow
+            checked={showOverlay}
+            onChange={() => setShowOverlay((b) => !b)}
+            label="Overlay simulations"
+            accent={COL.accent}
+            inkDim={COL.inkDim} rule={COL.rule} ink={COL.ink} mono={FONTS.mono}
+            title="Superimpose both simulations on a single set of plots for direct comparison."
+          />
         </div>
         <div style={{ flex: 1, textAlign: 'right' }}>
           <div style={{
@@ -10214,6 +10893,29 @@ function Tab3Content({ activeTab, onChangeTab }) {
         </div>
       </div>
 
+      {showOverlay ? (
+        <Tab3OverlayRow
+          overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
+          lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
+          energyA={energyA} energyB={energyB}
+          statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
+          tA={tARef.current} tB={tBRef.current}
+          isIonisedA={isIonisedA} isIonisedB={isIonisedB}
+          xGridA={resultA.xGrid_nm} xGridB={resultB.xGrid_nm} vEvA={resultA.V_eV} vEvB={resultB.V_eV}
+          qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
+          qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
+          qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
+          qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+          qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
+          qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
+          qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
+          qPosTheoryA={showTheory ? qPosTheoryA : null} qPosTheoryB={showTheory ? qPosTheoryB : null}
+          qETheoryA={showTheory ? qEnergyTheoryA : null} qETheoryB={showTheory ? qEnergyTheoryB : null}
+          eigenA={showEigen ? eigenStatesEvA : null} eigenB={showEigen ? eigenStatesEvB : null}
+          eHistMaxEvA={eHistMaxEvA} eHistMaxEvB={eHistMaxEvB}
+          xMinNmA={xMinNmA} xMaxNmA={xMaxNmA} xMinNmB={xMinNmB} xMaxNmB={xMaxNmB}
+        />
+      ) : (
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
         <Tab3SystemPanel section="sim"
           label="A"
@@ -10260,6 +10962,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
         />
       </div>
+      )}
 
       {/* Adaptive Notes — shape-aware "What you're looking at". Three
           columns matching Tabs 1 & 2: prep / readout / shape contrast.

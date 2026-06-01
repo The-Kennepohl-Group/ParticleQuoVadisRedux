@@ -1,0 +1,2328 @@
+{
+  "schema": "finite-well-comparison-export/v1",
+  "meta": {
+    "exported_at": "2026-05-29T20:36:12.652Z",
+    "n_position_bins": 120,
+    "x_plot_min": -0.3,
+    "x_plot_max": 1.3,
+    "n_energy_bins": 100,
+    "show_eigenstates": true,
+    "show_theory": false,
+    "links": {
+      "L": true,
+      "m_eff": false,
+      "v0": true,
+      "gamma": true,
+      "sigma": true,
+      "energy": true
+    },
+    "A": {
+      "length_nm": 1,
+      "m_eff_me": 1,
+      "v0_ev": 8,
+      "gamma_ev": 0,
+      "sigma_ev": 0.1,
+      "energy_ev": 0.29,
+      "e_star_ev": 0.0381,
+      "v0_internal": 209.97375328083987,
+      "e_hist_max_ev": 11.2,
+      "position_measurements": 10001,
+      "energy_measurements": 10001,
+      "ionisation_events": 0,
+      "outside_box_events": 39,
+      "mean_x_engine": 0.5011650717773415,
+      "mean_e_ev": 0.28971632870065284
+    },
+    "B": {
+      "length_nm": 1,
+      "m_eff_me": 0.067,
+      "v0_ev": 8,
+      "gamma_ev": 0,
+      "sigma_ev": 0.1,
+      "energy_ev": 2.3,
+      "e_star_ev": 0.5686567164179105,
+      "v0_internal": 14.068241469816272,
+      "e_hist_max_ev": 11.2,
+      "position_measurements": 10001,
+      "energy_measurements": 10001,
+      "ionisation_events": 0,
+      "outside_box_events": 903,
+      "mean_x_engine": 0.5076454279258275,
+      "mean_e_ev": 2.2979285967424175
+    }
+  },
+  "eigenvalues": {
+    "A": [
+      {
+        "n": 1,
+        "parity": "even",
+        "e_n_ev": 0.28991918998042243,
+        "e_n_engine": 7.60942755854127,
+        "k": 2.7585190879421644,
+        "kappa": 14.225481563810014
+      },
+      {
+        "n": 2,
+        "parity": "odd",
+        "e_n_ev": 1.1541829180251688,
+        "e_n_engine": 30.29351490879708,
+        "k": 5.50395447917196,
+        "kappa": 13.40448575559849
+      },
+      {
+        "n": 3,
+        "parity": "even",
+        "e_n_ev": 2.5735006906440594,
+        "e_n_engine": 67.54594988567085,
+        "k": 8.218634307819691,
+        "kappa": 11.934312020186542
+      },
+      {
+        "n": 4,
+        "parity": "odd",
+        "e_n_ev": 4.501639781026449,
+        "e_n_engine": 118.1532750925577,
+        "k": 10.869833259648361,
+        "kappa": 9.582300255590104
+      },
+      {
+        "n": 5,
+        "parity": "even",
+        "e_n_ev": 6.801662507275124,
+        "e_n_engine": 178.5213256502657,
+        "k": 13.361187284454392,
+        "kappa": 5.608246395315934
+      }
+    ],
+    "B": [
+      {
+        "n": 1,
+        "parity": "even",
+        "e_n_ev": 2.298085930976017,
+        "e_n_engine": 4.041253474419768,
+        "k": 2.01028691345782,
+        "kappa": 3.166541961729941
+      },
+      {
+        "n": 2,
+        "parity": "odd",
+        "e_n_ev": 7.520032226358181,
+        "e_n_engine": 13.224203652650868,
+        "k": 3.636509817483086,
+        "kappa": 0.9187153080064596
+      }
+    ]
+  },
+  "position_histogram": {
+    "A": [
+      {
+        "bin_index": 0,
+        "bin_center_engine": -0.29333333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 1,
+        "bin_center_engine": -0.27999999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 2,
+        "bin_center_engine": -0.26666666666666666,
+        "density": 0
+      },
+      {
+        "bin_index": 3,
+        "bin_center_engine": -0.2533333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 4,
+        "bin_center_engine": -0.24,
+        "density": 0
+      },
+      {
+        "bin_index": 5,
+        "bin_center_engine": -0.22666666666666666,
+        "density": 0
+      },
+      {
+        "bin_index": 6,
+        "bin_center_engine": -0.21333333333333332,
+        "density": 0
+      },
+      {
+        "bin_index": 7,
+        "bin_center_engine": -0.19999999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 8,
+        "bin_center_engine": -0.18666666666666665,
+        "density": 0
+      },
+      {
+        "bin_index": 9,
+        "bin_center_engine": -0.1733333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 10,
+        "bin_center_engine": -0.15999999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 11,
+        "bin_center_engine": -0.14666666666666664,
+        "density": 0
+      },
+      {
+        "bin_index": 12,
+        "bin_center_engine": -0.1333333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 13,
+        "bin_center_engine": -0.11999999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 14,
+        "bin_center_engine": -0.10666666666666663,
+        "density": 0
+      },
+      {
+        "bin_index": 15,
+        "bin_center_engine": -0.0933333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 16,
+        "bin_center_engine": -0.07999999999999999,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 17,
+        "bin_center_engine": -0.06666666666666665,
+        "density": 0
+      },
+      {
+        "bin_index": 18,
+        "bin_center_engine": -0.053333333333333316,
+        "density": 0
+      },
+      {
+        "bin_index": 19,
+        "bin_center_engine": -0.03999999999999998,
+        "density": 0.03749625037496251
+      },
+      {
+        "bin_index": 20,
+        "bin_center_engine": -0.026666666666666616,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 21,
+        "bin_center_engine": -0.013333333333333308,
+        "density": 0.0674932506749325
+      },
+      {
+        "bin_index": 22,
+        "bin_center_engine": 5.551115123125783e-17,
+        "density": 0.0674932506749325
+      },
+      {
+        "bin_index": 23,
+        "bin_center_engine": 0.013333333333333364,
+        "density": 0.11248875112488751
+      },
+      {
+        "bin_index": 24,
+        "bin_center_engine": 0.026666666666666672,
+        "density": 0.16498350164983502
+      },
+      {
+        "bin_index": 25,
+        "bin_center_engine": 0.040000000000000036,
+        "density": 0.17998200179982002
+      },
+      {
+        "bin_index": 26,
+        "bin_center_engine": 0.053333333333333344,
+        "density": 0.10498950104989502
+      },
+      {
+        "bin_index": 27,
+        "bin_center_engine": 0.06666666666666671,
+        "density": 0.26247375262473754
+      },
+      {
+        "bin_index": 28,
+        "bin_center_engine": 0.08000000000000002,
+        "density": 0.23247675232476753
+      },
+      {
+        "bin_index": 29,
+        "bin_center_engine": 0.09333333333333338,
+        "density": 0.23247675232476753
+      },
+      {
+        "bin_index": 30,
+        "bin_center_engine": 0.10666666666666669,
+        "density": 0.35996400359964004
+      },
+      {
+        "bin_index": 31,
+        "bin_center_engine": 0.12000000000000005,
+        "density": 0.45745425457454253
+      },
+      {
+        "bin_index": 32,
+        "bin_center_engine": 0.13333333333333336,
+        "density": 0.5174482551744826
+      },
+      {
+        "bin_index": 33,
+        "bin_center_engine": 0.14666666666666672,
+        "density": 0.5774422557744225
+      },
+      {
+        "bin_index": 34,
+        "bin_center_engine": 0.16000000000000003,
+        "density": 0.5774422557744225
+      },
+      {
+        "bin_index": 35,
+        "bin_center_engine": 0.1733333333333334,
+        "density": 0.6674332566743326
+      },
+      {
+        "bin_index": 36,
+        "bin_center_engine": 0.1866666666666667,
+        "density": 0.6974302569743026
+      },
+      {
+        "bin_index": 37,
+        "bin_center_engine": 0.2,
+        "density": 0.8774122587741227
+      },
+      {
+        "bin_index": 38,
+        "bin_center_engine": 0.21333333333333343,
+        "density": 0.7949205079492051
+      },
+      {
+        "bin_index": 39,
+        "bin_center_engine": 0.22666666666666674,
+        "density": 0.9374062593740626
+      },
+      {
+        "bin_index": 40,
+        "bin_center_engine": 0.24000000000000005,
+        "density": 1.01989801019898
+      },
+      {
+        "bin_index": 41,
+        "bin_center_engine": 0.25333333333333335,
+        "density": 0.9299070092990701
+      },
+      {
+        "bin_index": 42,
+        "bin_center_engine": 0.26666666666666666,
+        "density": 1.13988601139886
+      },
+      {
+        "bin_index": 43,
+        "bin_center_engine": 0.2800000000000001,
+        "density": 1.0348965103489651
+      },
+      {
+        "bin_index": 44,
+        "bin_center_engine": 0.2933333333333334,
+        "density": 1.2598740125987402
+      },
+      {
+        "bin_index": 45,
+        "bin_center_engine": 0.3066666666666667,
+        "density": 1.2373762623737627
+      },
+      {
+        "bin_index": 46,
+        "bin_center_engine": 0.32,
+        "density": 1.424857514248575
+      },
+      {
+        "bin_index": 47,
+        "bin_center_engine": 0.3333333333333334,
+        "density": 1.3348665133486652
+      },
+      {
+        "bin_index": 48,
+        "bin_center_engine": 0.34666666666666673,
+        "density": 1.3723627637236278
+      },
+      {
+        "bin_index": 49,
+        "bin_center_engine": 0.36000000000000004,
+        "density": 1.5298470152984702
+      },
+      {
+        "bin_index": 50,
+        "bin_center_engine": 0.37333333333333335,
+        "density": 1.6573342665733426
+      },
+      {
+        "bin_index": 51,
+        "bin_center_engine": 0.38666666666666677,
+        "density": 1.484851514848515
+      },
+      {
+        "bin_index": 52,
+        "bin_center_engine": 0.4000000000000001,
+        "density": 1.5073492650734928
+      },
+      {
+        "bin_index": 53,
+        "bin_center_engine": 0.4133333333333334,
+        "density": 1.8823117688231177
+      },
+      {
+        "bin_index": 54,
+        "bin_center_engine": 0.4266666666666667,
+        "density": 1.7623237676232377
+      },
+      {
+        "bin_index": 55,
+        "bin_center_engine": 0.4400000000000001,
+        "density": 1.6798320167983203
+      },
+      {
+        "bin_index": 56,
+        "bin_center_engine": 0.4533333333333334,
+        "density": 1.7923207679232078
+      },
+      {
+        "bin_index": 57,
+        "bin_center_engine": 0.46666666666666673,
+        "density": 1.7323267673232676
+      },
+      {
+        "bin_index": 58,
+        "bin_center_engine": 0.48000000000000004,
+        "density": 1.9648035196480353
+      },
+      {
+        "bin_index": 59,
+        "bin_center_engine": 0.49333333333333335,
+        "density": 1.6048395160483953
+      },
+      {
+        "bin_index": 60,
+        "bin_center_engine": 0.5066666666666668,
+        "density": 1.7998200179982002
+      },
+      {
+        "bin_index": 61,
+        "bin_center_engine": 0.52,
+        "density": 1.7398260173982603
+      },
+      {
+        "bin_index": 62,
+        "bin_center_engine": 0.5333333333333334,
+        "density": 1.6198380161983803
+      },
+      {
+        "bin_index": 63,
+        "bin_center_engine": 0.5466666666666666,
+        "density": 1.6273372662733727
+      },
+      {
+        "bin_index": 64,
+        "bin_center_engine": 0.56,
+        "density": 1.7398260173982603
+      },
+      {
+        "bin_index": 65,
+        "bin_center_engine": 0.5733333333333335,
+        "density": 1.6873312668733127
+      },
+      {
+        "bin_index": 66,
+        "bin_center_engine": 0.5866666666666667,
+        "density": 1.8373162683731628
+      },
+      {
+        "bin_index": 67,
+        "bin_center_engine": 0.6000000000000001,
+        "density": 1.7173282671732828
+      },
+      {
+        "bin_index": 68,
+        "bin_center_engine": 0.6133333333333335,
+        "density": 1.6198380161983803
+      },
+      {
+        "bin_index": 69,
+        "bin_center_engine": 0.6266666666666667,
+        "density": 1.6123387661233877
+      },
+      {
+        "bin_index": 70,
+        "bin_center_engine": 0.6400000000000001,
+        "density": 1.5223477652234776
+      },
+      {
+        "bin_index": 71,
+        "bin_center_engine": 0.6533333333333333,
+        "density": 1.6123387661233877
+      },
+      {
+        "bin_index": 72,
+        "bin_center_engine": 0.6666666666666667,
+        "density": 1.4998500149985001
+      },
+      {
+        "bin_index": 73,
+        "bin_center_engine": 0.6800000000000002,
+        "density": 1.3723627637236278
+      },
+      {
+        "bin_index": 74,
+        "bin_center_engine": 0.6933333333333334,
+        "density": 1.2823717628237177
+      },
+      {
+        "bin_index": 75,
+        "bin_center_engine": 0.7066666666666668,
+        "density": 1.2748725127487253
+      },
+      {
+        "bin_index": 76,
+        "bin_center_engine": 0.72,
+        "density": 1.3048695130486951
+      },
+      {
+        "bin_index": 77,
+        "bin_center_engine": 0.7333333333333334,
+        "density": 1.1023897610238977
+      },
+      {
+        "bin_index": 78,
+        "bin_center_engine": 0.7466666666666666,
+        "density": 0.9599040095990401
+      },
+      {
+        "bin_index": 79,
+        "bin_center_engine": 0.76,
+        "density": 0.9974002599740026
+      },
+      {
+        "bin_index": 80,
+        "bin_center_engine": 0.7733333333333334,
+        "density": 0.9149085091490851
+      },
+      {
+        "bin_index": 81,
+        "bin_center_engine": 0.7866666666666666,
+        "density": 0.8924107589241076
+      },
+      {
+        "bin_index": 82,
+        "bin_center_engine": 0.8,
+        "density": 0.6899310068993101
+      },
+      {
+        "bin_index": 83,
+        "bin_center_engine": 0.8133333333333335,
+        "density": 0.6149385061493851
+      },
+      {
+        "bin_index": 84,
+        "bin_center_engine": 0.8266666666666667,
+        "density": 0.6074392560743925
+      },
+      {
+        "bin_index": 85,
+        "bin_center_engine": 0.8400000000000001,
+        "density": 0.6599340065993401
+      },
+      {
+        "bin_index": 86,
+        "bin_center_engine": 0.8533333333333333,
+        "density": 0.5624437556244376
+      },
+      {
+        "bin_index": 87,
+        "bin_center_engine": 0.8666666666666667,
+        "density": 0.36746325367463256
+      },
+      {
+        "bin_index": 88,
+        "bin_center_engine": 0.8800000000000001,
+        "density": 0.41245875412458755
+      },
+      {
+        "bin_index": 89,
+        "bin_center_engine": 0.8933333333333333,
+        "density": 0.34496550344965504
+      },
+      {
+        "bin_index": 90,
+        "bin_center_engine": 0.9066666666666667,
+        "density": 0.38996100389961
+      },
+      {
+        "bin_index": 91,
+        "bin_center_engine": 0.9199999999999999,
+        "density": 0.35246475352464757
+      },
+      {
+        "bin_index": 92,
+        "bin_center_engine": 0.9333333333333333,
+        "density": 0.16498350164983502
+      },
+      {
+        "bin_index": 93,
+        "bin_center_engine": 0.9466666666666668,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 94,
+        "bin_center_engine": 0.96,
+        "density": 0.29997000299970006
+      },
+      {
+        "bin_index": 95,
+        "bin_center_engine": 0.9733333333333334,
+        "density": 0.0974902509749025
+      },
+      {
+        "bin_index": 96,
+        "bin_center_engine": 0.9866666666666668,
+        "density": 0.08999100089991001
+      },
+      {
+        "bin_index": 97,
+        "bin_center_engine": 1,
+        "density": 0.059994000599940006
+      },
+      {
+        "bin_index": 98,
+        "bin_center_engine": 1.0133333333333334,
+        "density": 0.05249475052494751
+      },
+      {
+        "bin_index": 99,
+        "bin_center_engine": 1.0266666666666666,
+        "density": 0.022497750224977502
+      },
+      {
+        "bin_index": 100,
+        "bin_center_engine": 1.04,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 101,
+        "bin_center_engine": 1.0533333333333335,
+        "density": 0.022497750224977502
+      },
+      {
+        "bin_index": 102,
+        "bin_center_engine": 1.0666666666666667,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 103,
+        "bin_center_engine": 1.08,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 104,
+        "bin_center_engine": 1.0933333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 105,
+        "bin_center_engine": 1.1066666666666667,
+        "density": 0.007499250074992501
+      },
+      {
+        "bin_index": 106,
+        "bin_center_engine": 1.12,
+        "density": 0
+      },
+      {
+        "bin_index": 107,
+        "bin_center_engine": 1.1333333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 108,
+        "bin_center_engine": 1.1466666666666667,
+        "density": 0
+      },
+      {
+        "bin_index": 109,
+        "bin_center_engine": 1.1600000000000001,
+        "density": 0
+      },
+      {
+        "bin_index": 110,
+        "bin_center_engine": 1.1733333333333333,
+        "density": 0
+      },
+      {
+        "bin_index": 111,
+        "bin_center_engine": 1.1866666666666668,
+        "density": 0
+      },
+      {
+        "bin_index": 112,
+        "bin_center_engine": 1.2,
+        "density": 0
+      },
+      {
+        "bin_index": 113,
+        "bin_center_engine": 1.2133333333333334,
+        "density": 0
+      },
+      {
+        "bin_index": 114,
+        "bin_center_engine": 1.2266666666666668,
+        "density": 0
+      },
+      {
+        "bin_index": 115,
+        "bin_center_engine": 1.24,
+        "density": 0
+      },
+      {
+        "bin_index": 116,
+        "bin_center_engine": 1.2533333333333334,
+        "density": 0
+      },
+      {
+        "bin_index": 117,
+        "bin_center_engine": 1.2666666666666668,
+        "density": 0
+      },
+      {
+        "bin_index": 118,
+        "bin_center_engine": 1.28,
+        "density": 0
+      },
+      {
+        "bin_index": 119,
+        "bin_center_engine": 1.2933333333333334,
+        "density": 0
+      }
+    ],
+    "B": [
+      {
+        "bin_index": 0,
+        "bin_center_engine": -0.29333333333333333,
+        "density": 0.0674932506749325
+      },
+      {
+        "bin_index": 1,
+        "bin_center_engine": -0.27999999999999997,
+        "density": 0.03749625037496251
+      },
+      {
+        "bin_index": 2,
+        "bin_center_engine": -0.26666666666666666,
+        "density": 0.07499250074992501
+      },
+      {
+        "bin_index": 3,
+        "bin_center_engine": -0.2533333333333333,
+        "density": 0.059994000599940006
+      },
+      {
+        "bin_index": 4,
+        "bin_center_engine": -0.24,
+        "density": 0.03749625037496251
+      },
+      {
+        "bin_index": 5,
+        "bin_center_engine": -0.22666666666666666,
+        "density": 0.0674932506749325
+      },
+      {
+        "bin_index": 6,
+        "bin_center_engine": -0.21333333333333332,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 7,
+        "bin_center_engine": -0.19999999999999998,
+        "density": 0.059994000599940006
+      },
+      {
+        "bin_index": 8,
+        "bin_center_engine": -0.18666666666666665,
+        "density": 0.07499250074992501
+      },
+      {
+        "bin_index": 9,
+        "bin_center_engine": -0.1733333333333333,
+        "density": 0.14998500149985003
+      },
+      {
+        "bin_index": 10,
+        "bin_center_engine": -0.15999999999999998,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 11,
+        "bin_center_engine": -0.14666666666666664,
+        "density": 0.0974902509749025
+      },
+      {
+        "bin_index": 12,
+        "bin_center_engine": -0.1333333333333333,
+        "density": 0.14998500149985003
+      },
+      {
+        "bin_index": 13,
+        "bin_center_engine": -0.11999999999999997,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 14,
+        "bin_center_engine": -0.10666666666666663,
+        "density": 0.194980501949805
+      },
+      {
+        "bin_index": 15,
+        "bin_center_engine": -0.0933333333333333,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 16,
+        "bin_center_engine": -0.07999999999999999,
+        "density": 0.23997600239976002
+      },
+      {
+        "bin_index": 17,
+        "bin_center_engine": -0.06666666666666665,
+        "density": 0.21747825217478253
+      },
+      {
+        "bin_index": 18,
+        "bin_center_engine": -0.053333333333333316,
+        "density": 0.26247375262473754
+      },
+      {
+        "bin_index": 19,
+        "bin_center_engine": -0.03999999999999998,
+        "density": 0.26997300269973
+      },
+      {
+        "bin_index": 20,
+        "bin_center_engine": -0.026666666666666616,
+        "density": 0.26247375262473754
+      },
+      {
+        "bin_index": 21,
+        "bin_center_engine": -0.013333333333333308,
+        "density": 0.284971502849715
+      },
+      {
+        "bin_index": 22,
+        "bin_center_engine": 5.551115123125783e-17,
+        "density": 0.36746325367463256
+      },
+      {
+        "bin_index": 23,
+        "bin_center_engine": 0.013333333333333364,
+        "density": 0.31496850314968505
+      },
+      {
+        "bin_index": 24,
+        "bin_center_engine": 0.026666666666666672,
+        "density": 0.41245875412458755
+      },
+      {
+        "bin_index": 25,
+        "bin_center_engine": 0.040000000000000036,
+        "density": 0.49495050494950504
+      },
+      {
+        "bin_index": 26,
+        "bin_center_engine": 0.053333333333333344,
+        "density": 0.35996400359964004
+      },
+      {
+        "bin_index": 27,
+        "bin_center_engine": 0.06666666666666671,
+        "density": 0.41245875412458755
+      },
+      {
+        "bin_index": 28,
+        "bin_center_engine": 0.08000000000000002,
+        "density": 0.5024497550244975
+      },
+      {
+        "bin_index": 29,
+        "bin_center_engine": 0.09333333333333338,
+        "density": 0.50994900509949
+      },
+      {
+        "bin_index": 30,
+        "bin_center_engine": 0.10666666666666669,
+        "density": 0.5624437556244376
+      },
+      {
+        "bin_index": 31,
+        "bin_center_engine": 0.12000000000000005,
+        "density": 0.50994900509949
+      },
+      {
+        "bin_index": 32,
+        "bin_center_engine": 0.13333333333333336,
+        "density": 0.6974302569743026
+      },
+      {
+        "bin_index": 33,
+        "bin_center_engine": 0.14666666666666672,
+        "density": 0.7424257574242575
+      },
+      {
+        "bin_index": 34,
+        "bin_center_engine": 0.16000000000000003,
+        "density": 0.8024197580241976
+      },
+      {
+        "bin_index": 35,
+        "bin_center_engine": 0.1733333333333334,
+        "density": 0.77992200779922
+      },
+      {
+        "bin_index": 36,
+        "bin_center_engine": 0.1866666666666667,
+        "density": 0.8699130086991301
+      },
+      {
+        "bin_index": 37,
+        "bin_center_engine": 0.2,
+        "density": 0.8624137586241376
+      },
+      {
+        "bin_index": 38,
+        "bin_center_engine": 0.21333333333333343,
+        "density": 0.8024197580241976
+      },
+      {
+        "bin_index": 39,
+        "bin_center_engine": 0.22666666666666674,
+        "density": 0.9599040095990401
+      },
+      {
+        "bin_index": 40,
+        "bin_center_engine": 0.24000000000000005,
+        "density": 0.9824017598240177
+      },
+      {
+        "bin_index": 41,
+        "bin_center_engine": 0.25333333333333335,
+        "density": 0.8474152584741526
+      },
+      {
+        "bin_index": 42,
+        "bin_center_engine": 0.26666666666666666,
+        "density": 0.9449055094490552
+      },
+      {
+        "bin_index": 43,
+        "bin_center_engine": 0.2800000000000001,
+        "density": 1.0498950104989502
+      },
+      {
+        "bin_index": 44,
+        "bin_center_engine": 0.2933333333333334,
+        "density": 1.1173882611738826
+      },
+      {
+        "bin_index": 45,
+        "bin_center_engine": 0.3066666666666667,
+        "density": 0.9524047595240476
+      },
+      {
+        "bin_index": 46,
+        "bin_center_engine": 0.32,
+        "density": 1.0648935106489352
+      },
+      {
+        "bin_index": 47,
+        "bin_center_engine": 0.3333333333333334,
+        "density": 1.0723927607239276
+      },
+      {
+        "bin_index": 48,
+        "bin_center_engine": 0.34666666666666673,
+        "density": 1.0648935106489352
+      },
+      {
+        "bin_index": 49,
+        "bin_center_engine": 0.36000000000000004,
+        "density": 1.2223777622237777
+      },
+      {
+        "bin_index": 50,
+        "bin_center_engine": 0.37333333333333335,
+        "density": 1.1773822617738225
+      },
+      {
+        "bin_index": 51,
+        "bin_center_engine": 0.38666666666666677,
+        "density": 1.1773822617738225
+      },
+      {
+        "bin_index": 52,
+        "bin_center_engine": 0.4000000000000001,
+        "density": 1.2298770122987701
+      },
+      {
+        "bin_index": 53,
+        "bin_center_engine": 0.4133333333333334,
+        "density": 1.2073792620737926
+      },
+      {
+        "bin_index": 54,
+        "bin_center_engine": 0.4266666666666667,
+        "density": 1.3123687631236876
+      },
+      {
+        "bin_index": 55,
+        "bin_center_engine": 0.4400000000000001,
+        "density": 1.2373762623737627
+      },
+      {
+        "bin_index": 56,
+        "bin_center_engine": 0.4533333333333334,
+        "density": 1.2223777622237777
+      },
+      {
+        "bin_index": 57,
+        "bin_center_engine": 0.46666666666666673,
+        "density": 1.2748725127487253
+      },
+      {
+        "bin_index": 58,
+        "bin_center_engine": 0.48000000000000004,
+        "density": 1.4548545145485452
+      },
+      {
+        "bin_index": 59,
+        "bin_center_engine": 0.49333333333333335,
+        "density": 1.2748725127487253
+      },
+      {
+        "bin_index": 60,
+        "bin_center_engine": 0.5066666666666668,
+        "density": 1.2448755124487552
+      },
+      {
+        "bin_index": 61,
+        "bin_center_engine": 0.52,
+        "density": 1.28987101289871
+      },
+      {
+        "bin_index": 62,
+        "bin_center_engine": 0.5333333333333334,
+        "density": 1.0573942605739426
+      },
+      {
+        "bin_index": 63,
+        "bin_center_engine": 0.5466666666666666,
+        "density": 1.3423657634236577
+      },
+      {
+        "bin_index": 64,
+        "bin_center_engine": 0.56,
+        "density": 1.2373762623737627
+      },
+      {
+        "bin_index": 65,
+        "bin_center_engine": 0.5733333333333335,
+        "density": 1.1623837616238377
+      },
+      {
+        "bin_index": 66,
+        "bin_center_engine": 0.5866666666666667,
+        "density": 1.1323867613238676
+      },
+      {
+        "bin_index": 67,
+        "bin_center_engine": 0.6000000000000001,
+        "density": 1.2223777622237777
+      },
+      {
+        "bin_index": 68,
+        "bin_center_engine": 0.6133333333333335,
+        "density": 1.2823717628237177
+      },
+      {
+        "bin_index": 69,
+        "bin_center_engine": 0.6266666666666667,
+        "density": 1.2298770122987701
+      },
+      {
+        "bin_index": 70,
+        "bin_center_engine": 0.6400000000000001,
+        "density": 1.2298770122987701
+      },
+      {
+        "bin_index": 71,
+        "bin_center_engine": 0.6533333333333333,
+        "density": 1.13988601139886
+      },
+      {
+        "bin_index": 72,
+        "bin_center_engine": 0.6666666666666667,
+        "density": 0.8999100089991001
+      },
+      {
+        "bin_index": 73,
+        "bin_center_engine": 0.6800000000000002,
+        "density": 1.1698830116988301
+      },
+      {
+        "bin_index": 74,
+        "bin_center_engine": 0.6933333333333334,
+        "density": 1.004899510048995
+      },
+      {
+        "bin_index": 75,
+        "bin_center_engine": 0.7066666666666668,
+        "density": 1.1023897610238977
+      },
+      {
+        "bin_index": 76,
+        "bin_center_engine": 0.72,
+        "density": 1.0648935106489352
+      },
+      {
+        "bin_index": 77,
+        "bin_center_engine": 0.7333333333333334,
+        "density": 0.9299070092990701
+      },
+      {
+        "bin_index": 78,
+        "bin_center_engine": 0.7466666666666666,
+        "density": 1.004899510048995
+      },
+      {
+        "bin_index": 79,
+        "bin_center_engine": 0.76,
+        "density": 0.9449055094490552
+      },
+      {
+        "bin_index": 80,
+        "bin_center_engine": 0.7733333333333334,
+        "density": 0.8699130086991301
+      },
+      {
+        "bin_index": 81,
+        "bin_center_engine": 0.7866666666666666,
+        "density": 0.8174182581741826
+      },
+      {
+        "bin_index": 82,
+        "bin_center_engine": 0.8,
+        "density": 0.9074092590740926
+      },
+      {
+        "bin_index": 83,
+        "bin_center_engine": 0.8133333333333335,
+        "density": 0.8024197580241976
+      },
+      {
+        "bin_index": 84,
+        "bin_center_engine": 0.8266666666666667,
+        "density": 1.0498950104989502
+      },
+      {
+        "bin_index": 85,
+        "bin_center_engine": 0.8400000000000001,
+        "density": 0.8849115088491151
+      },
+      {
+        "bin_index": 86,
+        "bin_center_engine": 0.8533333333333333,
+        "density": 0.6899310068993101
+      },
+      {
+        "bin_index": 87,
+        "bin_center_engine": 0.8666666666666667,
+        "density": 0.7949205079492051
+      },
+      {
+        "bin_index": 88,
+        "bin_center_engine": 0.8800000000000001,
+        "density": 0.5924407559244076
+      },
+      {
+        "bin_index": 89,
+        "bin_center_engine": 0.8933333333333333,
+        "density": 0.8024197580241976
+      },
+      {
+        "bin_index": 90,
+        "bin_center_engine": 0.9066666666666667,
+        "density": 0.6149385061493851
+      },
+      {
+        "bin_index": 91,
+        "bin_center_engine": 0.9199999999999999,
+        "density": 0.5624437556244376
+      },
+      {
+        "bin_index": 92,
+        "bin_center_engine": 0.9333333333333333,
+        "density": 0.4874512548745126
+      },
+      {
+        "bin_index": 93,
+        "bin_center_engine": 0.9466666666666668,
+        "density": 0.44995500449955006
+      },
+      {
+        "bin_index": 94,
+        "bin_center_engine": 0.96,
+        "density": 0.44245575442455753
+      },
+      {
+        "bin_index": 95,
+        "bin_center_engine": 0.9733333333333334,
+        "density": 0.4724527547245276
+      },
+      {
+        "bin_index": 96,
+        "bin_center_engine": 0.9866666666666668,
+        "density": 0.4724527547245276
+      },
+      {
+        "bin_index": 97,
+        "bin_center_engine": 1,
+        "density": 0.29997000299970006
+      },
+      {
+        "bin_index": 98,
+        "bin_center_engine": 1.0133333333333334,
+        "density": 0.3224677532246775
+      },
+      {
+        "bin_index": 99,
+        "bin_center_engine": 1.0266666666666666,
+        "density": 0.31496850314968505
+      },
+      {
+        "bin_index": 100,
+        "bin_center_engine": 1.04,
+        "density": 0.23247675232476753
+      },
+      {
+        "bin_index": 101,
+        "bin_center_engine": 1.0533333333333335,
+        "density": 0.30746925307469253
+      },
+      {
+        "bin_index": 102,
+        "bin_center_engine": 1.0666666666666667,
+        "density": 0.23247675232476753
+      },
+      {
+        "bin_index": 103,
+        "bin_center_engine": 1.08,
+        "density": 0.20247975202479754
+      },
+      {
+        "bin_index": 104,
+        "bin_center_engine": 1.0933333333333333,
+        "density": 0.17998200179982002
+      },
+      {
+        "bin_index": 105,
+        "bin_center_engine": 1.1066666666666667,
+        "density": 0.18748125187481252
+      },
+      {
+        "bin_index": 106,
+        "bin_center_engine": 1.12,
+        "density": 0.17998200179982002
+      },
+      {
+        "bin_index": 107,
+        "bin_center_engine": 1.1333333333333333,
+        "density": 0.11248875112488751
+      },
+      {
+        "bin_index": 108,
+        "bin_center_engine": 1.1466666666666667,
+        "density": 0.15748425157484253
+      },
+      {
+        "bin_index": 109,
+        "bin_center_engine": 1.1600000000000001,
+        "density": 0.1274872512748725
+      },
+      {
+        "bin_index": 110,
+        "bin_center_engine": 1.1733333333333333,
+        "density": 0.10498950104989502
+      },
+      {
+        "bin_index": 111,
+        "bin_center_engine": 1.1866666666666668,
+        "density": 0.10498950104989502
+      },
+      {
+        "bin_index": 112,
+        "bin_center_engine": 1.2,
+        "density": 0.134986501349865
+      },
+      {
+        "bin_index": 113,
+        "bin_center_engine": 1.2133333333333334,
+        "density": 0.044995500449955005
+      },
+      {
+        "bin_index": 114,
+        "bin_center_engine": 1.2266666666666668,
+        "density": 0.05249475052494751
+      },
+      {
+        "bin_index": 115,
+        "bin_center_engine": 1.24,
+        "density": 0.059994000599940006
+      },
+      {
+        "bin_index": 116,
+        "bin_center_engine": 1.2533333333333334,
+        "density": 0.0974902509749025
+      },
+      {
+        "bin_index": 117,
+        "bin_center_engine": 1.2666666666666668,
+        "density": 0.059994000599940006
+      },
+      {
+        "bin_index": 118,
+        "bin_center_engine": 1.28,
+        "density": 0.07499250074992501
+      },
+      {
+        "bin_index": 119,
+        "bin_center_engine": 1.2933333333333334,
+        "density": 0.014998500149985002
+      }
+    ]
+  },
+  "energy_histogram": {
+    "A": [
+      {
+        "bin_index": 0,
+        "bin_center_ev": 0.055999999999999994,
+        "density": 0.30621937806219385
+      },
+      {
+        "bin_index": 1,
+        "bin_center_ev": 0.16799999999999998,
+        "density": 1.9167726084534407
+      },
+      {
+        "bin_index": 2,
+        "bin_center_ev": 0.27999999999999997,
+        "density": 3.8174753953176115
+      },
+      {
+        "bin_index": 3,
+        "bin_center_ev": 0.39199999999999996,
+        "density": 2.339051809104804
+      },
+      {
+        "bin_index": 4,
+        "bin_center_ev": 0.504,
+        "density": 0.49370062993700636
+      },
+      {
+        "bin_index": 5,
+        "bin_center_ev": 0.6159999999999999,
+        "density": 0.029461339580327685
+      },
+      {
+        "bin_index": 6,
+        "bin_center_ev": 0.728,
+        "density": 0.000892767866070536
+      },
+      {
+        "bin_index": 7,
+        "bin_center_ev": 0.8399999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 8,
+        "bin_center_ev": 0.952,
+        "density": 0
+      },
+      {
+        "bin_index": 9,
+        "bin_center_ev": 1.0639999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 10,
+        "bin_center_ev": 1.176,
+        "density": 0
+      },
+      {
+        "bin_index": 11,
+        "bin_center_ev": 1.2879999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 12,
+        "bin_center_ev": 1.4,
+        "density": 0
+      },
+      {
+        "bin_index": 13,
+        "bin_center_ev": 1.5119999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 14,
+        "bin_center_ev": 1.6239999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 15,
+        "bin_center_ev": 1.7359999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 16,
+        "bin_center_ev": 1.8479999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 17,
+        "bin_center_ev": 1.9599999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 18,
+        "bin_center_ev": 2.0719999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 19,
+        "bin_center_ev": 2.1839999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 20,
+        "bin_center_ev": 2.296,
+        "density": 0
+      },
+      {
+        "bin_index": 21,
+        "bin_center_ev": 2.408,
+        "density": 0
+      },
+      {
+        "bin_index": 22,
+        "bin_center_ev": 2.5199999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 23,
+        "bin_center_ev": 2.6319999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 24,
+        "bin_center_ev": 2.7439999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 25,
+        "bin_center_ev": 2.856,
+        "density": 0
+      },
+      {
+        "bin_index": 26,
+        "bin_center_ev": 2.9679999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 27,
+        "bin_center_ev": 3.0799999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 28,
+        "bin_center_ev": 3.1919999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 29,
+        "bin_center_ev": 3.304,
+        "density": 0
+      },
+      {
+        "bin_index": 30,
+        "bin_center_ev": 3.4159999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 31,
+        "bin_center_ev": 3.5279999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 32,
+        "bin_center_ev": 3.6399999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 33,
+        "bin_center_ev": 3.752,
+        "density": 0
+      },
+      {
+        "bin_index": 34,
+        "bin_center_ev": 3.8639999999999994,
+        "density": 0
+      },
+      {
+        "bin_index": 35,
+        "bin_center_ev": 3.9759999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 36,
+        "bin_center_ev": 4.087999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 37,
+        "bin_center_ev": 4.199999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 38,
+        "bin_center_ev": 4.311999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 39,
+        "bin_center_ev": 4.4239999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 40,
+        "bin_center_ev": 4.536,
+        "density": 0
+      },
+      {
+        "bin_index": 41,
+        "bin_center_ev": 4.648,
+        "density": 0
+      },
+      {
+        "bin_index": 42,
+        "bin_center_ev": 4.76,
+        "density": 0
+      },
+      {
+        "bin_index": 43,
+        "bin_center_ev": 4.872,
+        "density": 0
+      },
+      {
+        "bin_index": 44,
+        "bin_center_ev": 4.983999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 45,
+        "bin_center_ev": 5.095999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 46,
+        "bin_center_ev": 5.207999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 47,
+        "bin_center_ev": 5.319999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 48,
+        "bin_center_ev": 5.4319999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 49,
+        "bin_center_ev": 5.544,
+        "density": 0
+      },
+      {
+        "bin_index": 50,
+        "bin_center_ev": 5.656,
+        "density": 0
+      },
+      {
+        "bin_index": 51,
+        "bin_center_ev": 5.768,
+        "density": 0
+      },
+      {
+        "bin_index": 52,
+        "bin_center_ev": 5.879999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 53,
+        "bin_center_ev": 5.991999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 54,
+        "bin_center_ev": 6.103999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 55,
+        "bin_center_ev": 6.215999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 56,
+        "bin_center_ev": 6.327999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 57,
+        "bin_center_ev": 6.4399999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 58,
+        "bin_center_ev": 6.552,
+        "density": 0
+      },
+      {
+        "bin_index": 59,
+        "bin_center_ev": 6.664,
+        "density": 0
+      },
+      {
+        "bin_index": 60,
+        "bin_center_ev": 6.775999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 61,
+        "bin_center_ev": 6.887999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 62,
+        "bin_center_ev": 6.999999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 63,
+        "bin_center_ev": 7.111999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 64,
+        "bin_center_ev": 7.223999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 65,
+        "bin_center_ev": 7.335999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 66,
+        "bin_center_ev": 7.4479999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 67,
+        "bin_center_ev": 7.56,
+        "density": 0
+      },
+      {
+        "bin_index": 68,
+        "bin_center_ev": 7.671999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 69,
+        "bin_center_ev": 7.783999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 70,
+        "bin_center_ev": 7.895999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 71,
+        "bin_center_ev": 8.008,
+        "density": 0
+      },
+      {
+        "bin_index": 72,
+        "bin_center_ev": 8.12,
+        "density": 0
+      },
+      {
+        "bin_index": 73,
+        "bin_center_ev": 8.232,
+        "density": 0
+      },
+      {
+        "bin_index": 74,
+        "bin_center_ev": 8.344,
+        "density": 0
+      },
+      {
+        "bin_index": 75,
+        "bin_center_ev": 8.456,
+        "density": 0
+      },
+      {
+        "bin_index": 76,
+        "bin_center_ev": 8.568,
+        "density": 0
+      },
+      {
+        "bin_index": 77,
+        "bin_center_ev": 8.68,
+        "density": 0
+      },
+      {
+        "bin_index": 78,
+        "bin_center_ev": 8.792,
+        "density": 0
+      },
+      {
+        "bin_index": 79,
+        "bin_center_ev": 8.904,
+        "density": 0
+      },
+      {
+        "bin_index": 80,
+        "bin_center_ev": 9.015999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 81,
+        "bin_center_ev": 9.127999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 82,
+        "bin_center_ev": 9.239999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 83,
+        "bin_center_ev": 9.351999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 84,
+        "bin_center_ev": 9.463999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 85,
+        "bin_center_ev": 9.575999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 86,
+        "bin_center_ev": 9.687999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 87,
+        "bin_center_ev": 9.799999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 88,
+        "bin_center_ev": 9.911999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 89,
+        "bin_center_ev": 10.024,
+        "density": 0
+      },
+      {
+        "bin_index": 90,
+        "bin_center_ev": 10.136,
+        "density": 0
+      },
+      {
+        "bin_index": 91,
+        "bin_center_ev": 10.248,
+        "density": 0
+      },
+      {
+        "bin_index": 92,
+        "bin_center_ev": 10.36,
+        "density": 0
+      },
+      {
+        "bin_index": 93,
+        "bin_center_ev": 10.472,
+        "density": 0
+      },
+      {
+        "bin_index": 94,
+        "bin_center_ev": 10.584,
+        "density": 0
+      },
+      {
+        "bin_index": 95,
+        "bin_center_ev": 10.696,
+        "density": 0
+      },
+      {
+        "bin_index": 96,
+        "bin_center_ev": 10.807999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 97,
+        "bin_center_ev": 10.919999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 98,
+        "bin_center_ev": 11.031999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 99,
+        "bin_center_ev": 11.143999999999998,
+        "density": 0
+      }
+    ],
+    "B": [
+      {
+        "bin_index": 0,
+        "bin_center_ev": 0.055999999999999994,
+        "density": 0
+      },
+      {
+        "bin_index": 1,
+        "bin_center_ev": 0.16799999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 2,
+        "bin_center_ev": 0.27999999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 3,
+        "bin_center_ev": 0.39199999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 4,
+        "bin_center_ev": 0.504,
+        "density": 0
+      },
+      {
+        "bin_index": 5,
+        "bin_center_ev": 0.6159999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 6,
+        "bin_center_ev": 0.728,
+        "density": 0
+      },
+      {
+        "bin_index": 7,
+        "bin_center_ev": 0.8399999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 8,
+        "bin_center_ev": 0.952,
+        "density": 0
+      },
+      {
+        "bin_index": 9,
+        "bin_center_ev": 1.0639999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 10,
+        "bin_center_ev": 1.176,
+        "density": 0
+      },
+      {
+        "bin_index": 11,
+        "bin_center_ev": 1.2879999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 12,
+        "bin_center_ev": 1.4,
+        "density": 0
+      },
+      {
+        "bin_index": 13,
+        "bin_center_ev": 1.5119999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 14,
+        "bin_center_ev": 1.6239999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 15,
+        "bin_center_ev": 1.7359999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 16,
+        "bin_center_ev": 1.8479999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 17,
+        "bin_center_ev": 1.9599999999999997,
+        "density": 0.016069821589269645
+      },
+      {
+        "bin_index": 18,
+        "bin_center_ev": 2.0719999999999996,
+        "density": 0.3660348250889197
+      },
+      {
+        "bin_index": 19,
+        "bin_center_ev": 2.1839999999999997,
+        "density": 2.102468324596112
+      },
+      {
+        "bin_index": 20,
+        "bin_center_ev": 2.296,
+        "density": 3.8522933420943626
+      },
+      {
+        "bin_index": 21,
+        "bin_center_ev": 2.408,
+        "density": 2.1765680574799666
+      },
+      {
+        "bin_index": 22,
+        "bin_center_ev": 2.5199999999999996,
+        "density": 0.38656848600854204
+      },
+      {
+        "bin_index": 23,
+        "bin_center_ev": 2.6319999999999997,
+        "density": 0.027675803848186614
+      },
+      {
+        "bin_index": 24,
+        "bin_center_ev": 2.7439999999999998,
+        "density": 0.000892767866070536
+      },
+      {
+        "bin_index": 25,
+        "bin_center_ev": 2.856,
+        "density": 0
+      },
+      {
+        "bin_index": 26,
+        "bin_center_ev": 2.9679999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 27,
+        "bin_center_ev": 3.0799999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 28,
+        "bin_center_ev": 3.1919999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 29,
+        "bin_center_ev": 3.304,
+        "density": 0
+      },
+      {
+        "bin_index": 30,
+        "bin_center_ev": 3.4159999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 31,
+        "bin_center_ev": 3.5279999999999996,
+        "density": 0
+      },
+      {
+        "bin_index": 32,
+        "bin_center_ev": 3.6399999999999997,
+        "density": 0
+      },
+      {
+        "bin_index": 33,
+        "bin_center_ev": 3.752,
+        "density": 0
+      },
+      {
+        "bin_index": 34,
+        "bin_center_ev": 3.8639999999999994,
+        "density": 0
+      },
+      {
+        "bin_index": 35,
+        "bin_center_ev": 3.9759999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 36,
+        "bin_center_ev": 4.087999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 37,
+        "bin_center_ev": 4.199999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 38,
+        "bin_center_ev": 4.311999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 39,
+        "bin_center_ev": 4.4239999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 40,
+        "bin_center_ev": 4.536,
+        "density": 0
+      },
+      {
+        "bin_index": 41,
+        "bin_center_ev": 4.648,
+        "density": 0
+      },
+      {
+        "bin_index": 42,
+        "bin_center_ev": 4.76,
+        "density": 0
+      },
+      {
+        "bin_index": 43,
+        "bin_center_ev": 4.872,
+        "density": 0
+      },
+      {
+        "bin_index": 44,
+        "bin_center_ev": 4.983999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 45,
+        "bin_center_ev": 5.095999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 46,
+        "bin_center_ev": 5.207999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 47,
+        "bin_center_ev": 5.319999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 48,
+        "bin_center_ev": 5.4319999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 49,
+        "bin_center_ev": 5.544,
+        "density": 0
+      },
+      {
+        "bin_index": 50,
+        "bin_center_ev": 5.656,
+        "density": 0
+      },
+      {
+        "bin_index": 51,
+        "bin_center_ev": 5.768,
+        "density": 0
+      },
+      {
+        "bin_index": 52,
+        "bin_center_ev": 5.879999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 53,
+        "bin_center_ev": 5.991999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 54,
+        "bin_center_ev": 6.103999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 55,
+        "bin_center_ev": 6.215999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 56,
+        "bin_center_ev": 6.327999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 57,
+        "bin_center_ev": 6.4399999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 58,
+        "bin_center_ev": 6.552,
+        "density": 0
+      },
+      {
+        "bin_index": 59,
+        "bin_center_ev": 6.664,
+        "density": 0
+      },
+      {
+        "bin_index": 60,
+        "bin_center_ev": 6.775999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 61,
+        "bin_center_ev": 6.887999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 62,
+        "bin_center_ev": 6.999999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 63,
+        "bin_center_ev": 7.111999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 64,
+        "bin_center_ev": 7.223999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 65,
+        "bin_center_ev": 7.335999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 66,
+        "bin_center_ev": 7.4479999999999995,
+        "density": 0
+      },
+      {
+        "bin_index": 67,
+        "bin_center_ev": 7.56,
+        "density": 0
+      },
+      {
+        "bin_index": 68,
+        "bin_center_ev": 7.671999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 69,
+        "bin_center_ev": 7.783999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 70,
+        "bin_center_ev": 7.895999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 71,
+        "bin_center_ev": 8.008,
+        "density": 0
+      },
+      {
+        "bin_index": 72,
+        "bin_center_ev": 8.12,
+        "density": 0
+      },
+      {
+        "bin_index": 73,
+        "bin_center_ev": 8.232,
+        "density": 0
+      },
+      {
+        "bin_index": 74,
+        "bin_center_ev": 8.344,
+        "density": 0
+      },
+      {
+        "bin_index": 75,
+        "bin_center_ev": 8.456,
+        "density": 0
+      },
+      {
+        "bin_index": 76,
+        "bin_center_ev": 8.568,
+        "density": 0
+      },
+      {
+        "bin_index": 77,
+        "bin_center_ev": 8.68,
+        "density": 0
+      },
+      {
+        "bin_index": 78,
+        "bin_center_ev": 8.792,
+        "density": 0
+      },
+      {
+        "bin_index": 79,
+        "bin_center_ev": 8.904,
+        "density": 0
+      },
+      {
+        "bin_index": 80,
+        "bin_center_ev": 9.015999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 81,
+        "bin_center_ev": 9.127999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 82,
+        "bin_center_ev": 9.239999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 83,
+        "bin_center_ev": 9.351999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 84,
+        "bin_center_ev": 9.463999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 85,
+        "bin_center_ev": 9.575999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 86,
+        "bin_center_ev": 9.687999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 87,
+        "bin_center_ev": 9.799999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 88,
+        "bin_center_ev": 9.911999999999999,
+        "density": 0
+      },
+      {
+        "bin_index": 89,
+        "bin_center_ev": 10.024,
+        "density": 0
+      },
+      {
+        "bin_index": 90,
+        "bin_center_ev": 10.136,
+        "density": 0
+      },
+      {
+        "bin_index": 91,
+        "bin_center_ev": 10.248,
+        "density": 0
+      },
+      {
+        "bin_index": 92,
+        "bin_center_ev": 10.36,
+        "density": 0
+      },
+      {
+        "bin_index": 93,
+        "bin_center_ev": 10.472,
+        "density": 0
+      },
+      {
+        "bin_index": 94,
+        "bin_center_ev": 10.584,
+        "density": 0
+      },
+      {
+        "bin_index": 95,
+        "bin_center_ev": 10.696,
+        "density": 0
+      },
+      {
+        "bin_index": 96,
+        "bin_center_ev": 10.807999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 97,
+        "bin_center_ev": 10.919999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 98,
+        "bin_center_ev": 11.031999999999998,
+        "density": 0
+      },
+      {
+        "bin_index": 99,
+        "bin_center_ev": 11.143999999999998,
+        "density": 0
+      }
+    ]
+  }
+}

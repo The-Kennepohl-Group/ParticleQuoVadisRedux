@@ -818,6 +818,36 @@ const X_PLOT_MIN    = -X_PLOT_MARGIN;
 const X_PLOT_MAX    = L + X_PLOT_MARGIN;
 const X_PLOT_RANGE  = X_PLOT_MAX - X_PLOT_MIN;
 
+// Re-bin a density histogram from its native (full) resolution down to
+// `nDst` display bins by area-weighted aggregation, which preserves the
+// total probability (and hence the density scale) exactly. This is a
+// PRESENTATION-only transform: the simulation always accumulates and the
+// exporter always writes the native-resolution histograms, so the saved
+// JSON/CSV are unchanged regardless of the display setting — a coarser
+// view is just the stored data re-aggregated. Never up-samples: if the
+// requested bin count is ≥ the native count the source is returned
+// unchanged, so display can only coarsen, never invent detail the data
+// doesn't contain.
+function rebinDensity(src, nDst) {
+  const nSrc = src.length;
+  if (!nDst || nDst >= nSrc) return src;
+  const dst = new Array(nDst).fill(0);
+  const ratio = nSrc / nDst;          // native bins spanned per display bin
+  for (let j = 0; j < nDst; j++) {
+    const a = j * ratio, b = (j + 1) * ratio;
+    const iStart = Math.floor(a), iEnd = Math.min(nSrc, Math.ceil(b));
+    let acc = 0;
+    for (let i = iStart; i < iEnd; i++) {
+      const overlap = Math.min(b, i + 1) - Math.max(a, i);
+      if (overlap > 0) acc += src[i] * overlap;
+    }
+    // src[i] is a density; ∫ over the display bin = Σ density·(overlap·w),
+    // and the display bin width is ratio·w, so the w cancels.
+    dst[j] = acc / ratio;
+  }
+  return dst;
+}
+
 // V0 is a user-controlled slider as of chunk 4. Below V0_MIN the well
 // doesn't contain a bound state (or barely does); above V0_MAX we'd
 // have more bound states than we can usefully display (cap at
@@ -1202,6 +1232,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   // Persistent settings (read first because `states` depends on the cap).
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:pauseIncrement', 10000);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:maxBoundCap',    8);
+  const [histBins,       setHistBins]       = useSavedState('redux:histBins', NBINS_X); // display histogram resolution (≤ native)
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',       'en');
   const [showNotes,      setShowNotes]      = useSavedState('redux:showNotes',      false);
@@ -1931,6 +1962,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const eHistDensity  = count   > 0 ? Array.from(eHistRef.current).map((c) => c / (count   * eBinWidth)) : Array(NBINS_E).fill(0);
   const qXHistDensity = qXCount > 0 ? Array.from(qXHistRef.current).map((c) => c / (qXCount * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensity = qECount > 0 ? Array.from(qEHistRef.current).map((c) => c / (qECount * eBinWidth)) : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports above use the native arrays).
+  const xHistDisp  = rebinDensity(xHistDensity,  histBins);
+  const eHistDisp  = rebinDensity(eHistDensity,  histBins);
+  const qXHistDisp = rebinDensity(qXHistDensity, histBins);
+  const qEHistDisp = rebinDensity(qEHistDensity, histBins);
 
   const xMean = count > 0 ? xSumRef.current / count : null;
   const eMean = count > 0 ? eSumRef.current / count : null;
@@ -2065,6 +2101,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           onClose={() => setSettingsOpen(false)}
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
+          histBins={histBins}             setHistBins={setHistBins}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -2582,8 +2619,8 @@ function Tab1Content({ activeTab, onChangeTab }) {
             logEnergy={logEnergy} setLogEnergy={setLogEnergy}
             states={states} probs={probs} t={tRef.current} isIonised={isIonised}
             energy={energy} V0={V0} eHistMax={eHistMax}
-            xHistDensity={xHistDensity} eHistDensity={eHistDensity}
-            qXHistDensity={qXHistDensity} qEHistDensity={qEHistDensity}
+            xHistDensity={xHistDisp} eHistDensity={eHistDisp}
+            qXHistDensity={qXHistDisp} qEHistDensity={qEHistDisp}
             xMean={xMean} eMean={eMean} qxMean={qxMean} qeMean={qeMean}
             qIonisedFrac={qIonisedFrac} qLeakFrac={qLeakFrac}
             cPosTheory={showTheory ? cPosTheoryDensity : null}
@@ -2622,7 +2659,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 eHistMax={eHistMax}
               />
               <VerticalEnergyHistogram
-                hist={eHistDensity}
+                hist={eHistDisp}
                 recentMarkers={recentERef.current}
                 col={COL.classical}
                 ink={COL.ink}
@@ -2642,7 +2679,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 onToggleLogY={() => setLogEnergy((b) => !b)}
               />
               <PositionHistogram
-                hist={xHistDensity}
+                hist={xHistDisp}
                 recentMarkers={recentXRef.current}
                 col={COL.classical}
                 ink={COL.ink}
@@ -2749,7 +2786,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 showEigenStates={showEigen ? states : null}
               />
               <VerticalEnergyHistogram
-                hist={qEHistDensity}
+                hist={qEHistDisp}
                 recentMarkers={qRecentERef.current}
                 col={COL.quantum}
                 ink={COL.ink}
@@ -2770,7 +2807,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
               />
               {/* Bottom row: P(x) horizontal (left) + info panel (right). */}
               <PositionHistogram
-                hist={qXHistDensity}
+                hist={qXHistDisp}
                 recentMarkers={qRecentXRef.current}
                 col={COL.quantum}
                 ink={COL.ink}
@@ -4882,6 +4919,7 @@ function SettingsModal({
   onClose,
   pauseIncrement, setPauseIncrement,
   maxBoundCap,    setMaxBoundCap,
+  histBins,       setHistBins,
   waveTimeMult,   setWaveTimeMult,
   randomSeed,     setRandomSeed,
   language,       setLanguage,
@@ -4933,6 +4971,7 @@ function SettingsModal({
   function resetAll() {
     setPauseIncrement(10000);
     setMaxBoundCap(8);
+    setHistBins(NBINS_X);
     setWaveTimeMult(1);
     setRandomSeed(0);
     setLanguage('en');
@@ -4985,6 +5024,19 @@ function SettingsModal({
           <div style={hintStyle}>
             Cap on how many bound states are displayed on the energy
             slider and the P(E) panels. 8 is the absolute maximum.
+          </div>
+        </div>
+
+        <div style={rowStyle}>
+          <div style={labelStyle}>Histogram bins (display)</div>
+          {intInput(histBins, setHistBins, 10, NBINS_X)}
+          <div style={hintStyle}>
+            Bins used to <em>draw</em> the position &amp; energy histograms
+            ({10}–{NBINS_X}). Fewer bins = coarser, smoother bars. This is
+            a plotting-only setting: the simulation always records at the
+            full {NBINS_X}-bin resolution and the exported CSV/JSON always
+            contain that full resolution, so saved data can be re-binned
+            freely afterwards.
           </div>
         </div>
 
@@ -8440,6 +8492,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
   // Shared display cap on bound-state count (one number governs both
   // panels — it's a UI knob, not a physical knob).
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab2.maxBoundCap', 8);
+  const [histBins,       setHistBins]       = useSavedState('redux:tab2.histBins', NBINS_X); // display histogram resolution (≤ native)
   // Per-tab preferences shared via the Settings modal. Same shape as
   // tab 1's, namespaced under `redux:tab2.*` so the two tabs can
   // diverge if the student wants.
@@ -9259,6 +9312,11 @@ function Tab2Content({ activeTab, onChangeTab }) {
   const qEHistDensityA = qECountA > 0 ? Array.from(qEHistARef.current).map((c) => c / (qECountA * eBinWidthEvA)) : Array(NBINS_E).fill(0);
   const qXHistDensityB = qXCountB > 0 ? Array.from(qXHistBRef.current).map((c) => c / (qXCountB * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensityB = qECountB > 0 ? Array.from(qEHistBRef.current).map((c) => c / (qECountB * eBinWidthEvB)) : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports use the native arrays above).
+  const qXHistDispA = rebinDensity(qXHistDensityA, histBins);
+  const qEHistDispA = rebinDensity(qEHistDensityA, histBins);
+  const qXHistDispB = rebinDensity(qXHistDensityB, histBins);
+  const qEHistDispB = rebinDensity(qEHistDensityB, histBins);
   const qxMeanA = qXCountA > 0 ? qXSumARef.current / qXCountA : null;
   const qeMeanA = qECountA > 0 ? qESumARef.current / qECountA : null;
   const qIonisedFracA = qECountA > 0 ? qIonisedCountARef.current / qECountA : 0;
@@ -9370,6 +9428,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
           onClose={() => setSettingsOpen(false)}
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
+          histBins={histBins}             setHistBins={setHistBins}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -9723,8 +9782,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             isIonisedA={isIonisedA} isIonisedB={isIonisedB}
             qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
             qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
-            qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
-            qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+            qXHistDensityA={qXHistDispA} qXHistDensityB={qXHistDispB}
+            qEHistDensityA={qEHistDispA} qEHistDensityB={qEHistDispB}
             qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
             qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
             qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
@@ -9746,8 +9805,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qXLatest={qXLatestARef.current}
             qRecentX={qRecentXARef.current}
             qRecentE={qRecentEARef.current}
-            qXHistDensity={qXHistDensityA}
-            qEHistDensity={qEHistDensityA}
+            qXHistDensity={qXHistDispA}
+            qEHistDensity={qEHistDispA}
             qxMean={qxMeanA} qeMean={qeMeanA}
             qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
             qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA}
@@ -9767,8 +9826,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qXLatest={qXLatestBRef.current}
             qRecentX={qRecentXBRef.current}
             qRecentE={qRecentEBRef.current}
-            qXHistDensity={qXHistDensityB}
-            qEHistDensity={qEHistDensityB}
+            qXHistDensity={qXHistDispB}
+            qEHistDensity={qEHistDispB}
             qxMean={qxMeanB} qeMean={qeMeanB}
             qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
             qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB}
@@ -9867,6 +9926,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [mEffB,   setMEffB]   = useSavedState('redux:tab3.B.mEffMe',   1.0);
   const [v0B,     setV0B]     = useSavedState('redux:tab3.B.v0eV',     5.0);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab3.maxBoundCap', 8);
+  const [histBins,       setHistBins]       = useSavedState('redux:tab3.histBins', NBINS_X); // display histogram resolution (≤ native)
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:tab3.pauseIncrement', 10000);
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:tab3.waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',            'en');
@@ -10751,6 +10811,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const qEHistDensityA = qECountA > 0 ? Array.from(qEHistARef.current).map((c) => c / (qECountA * eBinWA))      : Array(NBINS_E).fill(0);
   const qXHistDensityB = qXCountB > 0 ? Array.from(qXHistBRef.current).map((c) => c / (qXCountB * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensityB = qECountB > 0 ? Array.from(qEHistBRef.current).map((c) => c / (qECountB * eBinWB))      : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports use the native arrays above).
+  const qXHistDispA = rebinDensity(qXHistDensityA, histBins);
+  const qEHistDispA = rebinDensity(qEHistDensityA, histBins);
+  const qXHistDispB = rebinDensity(qXHistDensityB, histBins);
+  const qEHistDispB = rebinDensity(qEHistDensityB, histBins);
   const qxMeanA = qXCountA > 0 ? qXSumARef.current / qXCountA : null;
   const qxMeanB = qXCountB > 0 ? qXSumBRef.current / qXCountB : null;
   const qeMeanA = qECountA > 0 ? qESumARef.current / qECountA : null;
@@ -11048,8 +11113,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xGridA={resultA.xGrid_nm} xGridB={resultB.xGrid_nm} vEvA={resultA.V_eV} vEvB={resultB.V_eV}
           qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
           qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
-          qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
-          qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+          qXHistDensityA={qXHistDispA} qXHistDensityB={qXHistDispB}
+          qEHistDensityA={qEHistDispA} qEHistDensityB={qEHistDispB}
           qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
           qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
           qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
@@ -11071,7 +11136,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           isIonised={isIonisedA} probs={probsA}
           tCurrent={tARef.current} qXLatest={qXLatestARef.current}
           qRecentX={qRecentXARef.current} qRecentE={qRecentEARef.current}
-          qXHistDensity={qXHistDensityA} qEHistDensity={qEHistDensityA}
+          qXHistDensity={qXHistDispA} qEHistDensity={qEHistDispA}
           qxMean={qxMeanA} qeMean={qeMeanA}
           qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
           psiMode={psiModeA} setPsiMode={setPsiModeA}
@@ -11093,7 +11158,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           isIonised={isIonisedB} probs={probsB}
           tCurrent={tBRef.current} qXLatest={qXLatestBRef.current}
           qRecentX={qRecentXBRef.current} qRecentE={qRecentEBRef.current}
-          qXHistDensity={qXHistDensityB} qEHistDensity={qEHistDensityB}
+          qXHistDensity={qXHistDispB} qEHistDensity={qEHistDispB}
           qxMean={qxMeanB} qeMean={qeMeanB}
           qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
           psiMode={psiModeB} setPsiMode={setPsiModeB}
@@ -11224,6 +11289,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
               <Stepper value={pauseIncrement} onChange={setPauseIncrement} min={1000} max={100000} step={1000} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Max bound states shown</div>
               <Stepper value={maxBoundCap} onChange={setMaxBoundCap} min={1} max={MAX_BOUND_STATES_DISPLAY} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div title={`Bins used to draw the histograms (10–${NBINS_X}). Plotting only — the simulation and the exported CSV/JSON always keep the full ${NBINS_X}-bin resolution, so saved data can be re-binned afterwards.`}>Histogram bins (display)</div>
+              <Stepper value={histBins} onChange={setHistBins} min={10} max={NBINS_X} step={10} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Wavefunction time multiplier</div>
               <Stepper value={waveTimeMult} onChange={setWaveTimeMult} min={0.1} max={10} step={0.1} decimals={1} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Random seed (0 = unseeded)</div>

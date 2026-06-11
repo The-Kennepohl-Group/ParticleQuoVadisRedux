@@ -818,6 +818,36 @@ const X_PLOT_MIN    = -X_PLOT_MARGIN;
 const X_PLOT_MAX    = L + X_PLOT_MARGIN;
 const X_PLOT_RANGE  = X_PLOT_MAX - X_PLOT_MIN;
 
+// Re-bin a density histogram from its native (full) resolution down to
+// `nDst` display bins by area-weighted aggregation, which preserves the
+// total probability (and hence the density scale) exactly. This is a
+// PRESENTATION-only transform: the simulation always accumulates and the
+// exporter always writes the native-resolution histograms, so the saved
+// JSON/CSV are unchanged regardless of the display setting — a coarser
+// view is just the stored data re-aggregated. Never up-samples: if the
+// requested bin count is ≥ the native count the source is returned
+// unchanged, so display can only coarsen, never invent detail the data
+// doesn't contain.
+function rebinDensity(src, nDst) {
+  const nSrc = src.length;
+  if (!nDst || nDst >= nSrc) return src;
+  const dst = new Array(nDst).fill(0);
+  const ratio = nSrc / nDst;          // native bins spanned per display bin
+  for (let j = 0; j < nDst; j++) {
+    const a = j * ratio, b = (j + 1) * ratio;
+    const iStart = Math.floor(a), iEnd = Math.min(nSrc, Math.ceil(b));
+    let acc = 0;
+    for (let i = iStart; i < iEnd; i++) {
+      const overlap = Math.min(b, i + 1) - Math.max(a, i);
+      if (overlap > 0) acc += src[i] * overlap;
+    }
+    // src[i] is a density; ∫ over the display bin = Σ density·(overlap·w),
+    // and the display bin width is ratio·w, so the w cancels.
+    dst[j] = acc / ratio;
+  }
+  return dst;
+}
+
 // V0 is a user-controlled slider as of chunk 4. Below V0_MIN the well
 // doesn't contain a bound state (or barely does); above V0_MAX we'd
 // have more bound states than we can usefully display (cap at
@@ -1202,6 +1232,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   // Persistent settings (read first because `states` depends on the cap).
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:pauseIncrement', 10000);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:maxBoundCap',    8);
+  const [histBins,       setHistBins]       = useSavedState('redux:histBins', NBINS_X); // display histogram resolution (≤ native)
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',       'en');
   const [showNotes,      setShowNotes]      = useSavedState('redux:showNotes',      false);
@@ -1215,6 +1246,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const [showEigen, setShowEigen]   = useState(false);  // eigenstate ticks on the slider + histograms
   const [showTheory, setShowTheory] = useState(false);  // |c_n|² overlay on the quantum P(E)
   const [showOverlay, setShowOverlay] = useState(false); // superimpose classical + quantum on one set of plots
+  const [overlayPsiMode, setOverlayPsiMode] = useState('density'); // |ψ|² / ψ / Off in the combined sim view
   const [logEnergy, setLogEnergy]   = useState(false);  // log vs linear y axis on the P(E) panels
   const states = useMemo(() => findBoundStates(V0, maxBoundCap), [V0, maxBoundCap]);
 
@@ -1610,6 +1642,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
       gamma_internal: gammaInternal,
       gamma_displayed: gammaInternal - 1,
       instrument_sigma: sigma,
+      // Presentation/view state — tolerated as extra keys by loaders;
+      // lets a saved preset reopen in the same overlay / binning view.
+      show_overlay: showOverlay,
+      overlay_psi_mode: overlayPsiMode,
+      hist_bins: histBins,
       energy_units: 'hbar^2 / (2 m L^2)',
       position_units: 'L (box length)',
       n_position_bins: NBINS_X,
@@ -1773,6 +1810,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
     if (typeof m.instrument_sigma === 'number') setSigma(m.instrument_sigma);
     setV0(m.v0);
 
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay === 'boolean') setShowOverlay(m.show_overlay);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
+
     // Reconstruct counts from density × total × binWidth.
     const xBinW = X_PLOT_RANGE / NBINS_X;
     const loadedEHistMax = m.energy_axis_max;
@@ -1930,6 +1972,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const eHistDensity  = count   > 0 ? Array.from(eHistRef.current).map((c) => c / (count   * eBinWidth)) : Array(NBINS_E).fill(0);
   const qXHistDensity = qXCount > 0 ? Array.from(qXHistRef.current).map((c) => c / (qXCount * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensity = qECount > 0 ? Array.from(qEHistRef.current).map((c) => c / (qECount * eBinWidth)) : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports above use the native arrays).
+  const xHistDisp  = rebinDensity(xHistDensity,  histBins);
+  const eHistDisp  = rebinDensity(eHistDensity,  histBins);
+  const qXHistDisp = rebinDensity(qXHistDensity, histBins);
+  const qEHistDisp = rebinDensity(qEHistDensity, histBins);
 
   const xMean = count > 0 ? xSumRef.current / count : null;
   const eMean = count > 0 ? eSumRef.current / count : null;
@@ -2064,6 +2111,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           onClose={() => setSettingsOpen(false)}
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
+          histBins={histBins}             setHistBins={setHistBins}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -2577,10 +2625,12 @@ function Tab1Content({ activeTab, onChangeTab }) {
              simulations" is ON, collapse to one combined panel. ===== */}
         {showOverlay ? (
           <Tab1OverlayRow
+            overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
+            logEnergy={logEnergy} setLogEnergy={setLogEnergy}
             states={states} probs={probs} t={tRef.current} isIonised={isIonised}
             energy={energy} V0={V0} eHistMax={eHistMax}
-            xHistDensity={xHistDensity} eHistDensity={eHistDensity}
-            qXHistDensity={qXHistDensity} qEHistDensity={qEHistDensity}
+            xHistDensity={xHistDisp} eHistDensity={eHistDisp}
+            qXHistDensity={qXHistDisp} qEHistDensity={qEHistDisp}
             xMean={xMean} eMean={eMean} qxMean={qxMean} qeMean={qeMean}
             qIonisedFrac={qIonisedFrac} qLeakFrac={qLeakFrac}
             cPosTheory={showTheory ? cPosTheoryDensity : null}
@@ -2619,7 +2669,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 eHistMax={eHistMax}
               />
               <VerticalEnergyHistogram
-                hist={eHistDensity}
+                hist={eHistDisp}
                 recentMarkers={recentERef.current}
                 col={COL.classical}
                 ink={COL.ink}
@@ -2639,7 +2689,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 onToggleLogY={() => setLogEnergy((b) => !b)}
               />
               <PositionHistogram
-                hist={xHistDensity}
+                hist={xHistDisp}
                 recentMarkers={recentXRef.current}
                 col={COL.classical}
                 ink={COL.ink}
@@ -2746,7 +2796,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 showEigenStates={showEigen ? states : null}
               />
               <VerticalEnergyHistogram
-                hist={qEHistDensity}
+                hist={qEHistDisp}
                 recentMarkers={qRecentERef.current}
                 col={COL.quantum}
                 ink={COL.ink}
@@ -2767,7 +2817,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
               />
               {/* Bottom row: P(x) horizontal (left) + info panel (right). */}
               <PositionHistogram
-                hist={qXHistDensity}
+                hist={qXHistDisp}
                 recentMarkers={qRecentXRef.current}
                 col={COL.quantum}
                 ink={COL.ink}
@@ -4375,6 +4425,17 @@ function Tab3WavefunctionView({
              ? { overflow: 'visible', position: 'relative', zIndex: 1 }
              : { overflow: 'hidden' }),
          }}>
+      {/* Horizontal clip for the shape outline / wavefunction / flashes.
+          The rect is tall (y spans well beyond the viewBox) so the
+          extended-mode overflow:visible still lets wavefunction lobes
+          spill DOWN into the position histogram — but the potential and
+          ψ tails are clipped at the x-axis edges so they never paint
+          past the left/right of the plot (Coulomb / parabolic skirts). */}
+      <defs>
+        <clipPath id="tab3SimXClipMain">
+          <rect x={PAD_L} y={-2000} width={INNER_W} height={4000} />
+        </clipPath>
+      </defs>
       {/* Floor line — V = 0 across the full visible x range. */}
       <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY}
             stroke={wall} strokeWidth={1.5} opacity={0.55} />
@@ -4427,7 +4488,8 @@ function Tab3WavefunctionView({
           5 so the parabolic and Coulomb curves don't look heavy. Same
           weight as Tab 1/2's finite-square outline path. */}
       {potentialPath && (
-        <path d={potentialPath} fill="none" stroke={wall} strokeWidth={3} strokeLinejoin="round" />
+        <path d={potentialPath} fill="none" stroke={wall} strokeWidth={3} strokeLinejoin="round"
+              clipPath="url(#tab3SimXClipMain)" />
       )}
 
       {/* Centerline + L/2 tick marks. */}
@@ -4458,11 +4520,12 @@ function Tab3WavefunctionView({
       })()}
 
       {!isIonised && path && showDensity && (
-        <path d={path} fill={col} fillOpacity={0.28} stroke={col} strokeWidth={1.8} />
+        <path d={path} fill={col} fillOpacity={0.28} stroke={col} strokeWidth={1.8}
+              clipPath="url(#tab3SimXClipMain)" />
       )}
 
       {!isIonised && showWavefunction && (
-        <g>
+        <g clipPath="url(#tab3SimXClipMain)">
           <line x1={PAD_L} x2={PAD_L + INNER_W} y1={midY} y2={midY}
                 stroke="#9aa0b4" strokeWidth={1} opacity={0.6} strokeDasharray="3 4" />
           {rePath && <path d={rePath} fill="none" stroke={col} strokeWidth={1.8} />}
@@ -4483,6 +4546,7 @@ function Tab3WavefunctionView({
           measured energy mapped onto the panel: floor for E = 0,
           ceiling for E = v0eV, clamped at the ceiling for ionised
           events so they appear at the rim with the ionised colour. */}
+      <g clipPath="url(#tab3SimXClipMain)">
       {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
         const xNm = (m.x - 0.5) * lengthNm;
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
@@ -4501,6 +4565,7 @@ function Tab3WavefunctionView({
         const fillColour = isAboveV0 ? ionisedCol : col;
         return <circle key={i} cx={xToPx(xNm)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
       })}
+      </g>
 
       {isIonised && (
         <g>
@@ -4864,6 +4929,7 @@ function SettingsModal({
   onClose,
   pauseIncrement, setPauseIncrement,
   maxBoundCap,    setMaxBoundCap,
+  histBins,       setHistBins,
   waveTimeMult,   setWaveTimeMult,
   randomSeed,     setRandomSeed,
   language,       setLanguage,
@@ -4915,6 +4981,7 @@ function SettingsModal({
   function resetAll() {
     setPauseIncrement(10000);
     setMaxBoundCap(8);
+    setHistBins(NBINS_X);
     setWaveTimeMult(1);
     setRandomSeed(0);
     setLanguage('en');
@@ -4967,6 +5034,19 @@ function SettingsModal({
           <div style={hintStyle}>
             Cap on how many bound states are displayed on the energy
             slider and the P(E) panels. 8 is the absolute maximum.
+          </div>
+        </div>
+
+        <div style={rowStyle}>
+          <div style={labelStyle}>Histogram bins (display)</div>
+          {intInput(histBins, setHistBins, 10, NBINS_X)}
+          <div style={hintStyle}>
+            Bins used to <em>draw</em> the position &amp; energy histograms
+            ({10}–{NBINS_X}). Fewer bins = coarser, smoother bars. This is
+            a plotting-only setting: the simulation always records at the
+            full {NBINS_X}-bin resolution and the exported CSV/JSON always
+            contain that full resolution, so saved data can be re-binned
+            freely afterwards.
           </div>
         </div>
 
@@ -6537,50 +6617,6 @@ function VerticalEnergyHistogram({
 // position 480×200) so the combined 2×2 grid (1fr / 130px) lines up
 // pixel-for-pixel with the layout it replaces.
 
-// Stepped envelope of a position histogram (engine bins over the fixed
-// [X_PLOT_MIN, X_PLOT_MAX] window). Returns a line path tracing bin
-// tops and a fill path sealed to the baseline — the overlaid-histogram
-// look, far more legible than two sets of opaque bars.
-function buildPosStepPaths(histArr, xScaleFn, yScaleFn, axisY) {
-  const NB = histArr.length;
-  if (!NB) return null;
-  let line = '';
-  for (let i = 0; i < NB; i++) {
-    const xs0 = X_PLOT_MIN + (i / NB) * X_PLOT_RANGE;
-    const xs1 = X_PLOT_MIN + ((i + 1) / NB) * X_PLOT_RANGE;
-    const X0 = xScaleFn(xs0).toFixed(2);
-    const X1 = xScaleFn(xs1).toFixed(2);
-    const Y = yScaleFn(histArr[i]).toFixed(2);
-    line += (i === 0 ? `M${X0},${Y}` : ` L${X0},${Y}`) + ` L${X1},${Y}`;
-  }
-  const firstX = xScaleFn(X_PLOT_MIN).toFixed(2);
-  const lastX = xScaleFn(X_PLOT_MAX).toFixed(2);
-  const a = axisY.toFixed(2);
-  return { line, fill: `${line} L${lastX},${a} L${firstX},${a} Z` };
-}
-
-// Stepped envelope of an energy histogram, rotated 90°: bars grow left
-// from axisX, the trace runs up the energy axis. ownMax is the per-
-// system energy bin-max (each system was binned against its own
-// eHistMaxEv); the shared display axis is handled by yScaleFn.
-function buildEnergyStepPaths(histArr, ownMax, xScaleFn, yScaleFn, axisX) {
-  const NB = histArr.length;
-  if (!NB) return null;
-  let line = '';
-  for (let i = 0; i < NB; i++) {
-    const E0 = (ownMax * i) / NB;
-    const E1 = (ownMax * (i + 1)) / NB;
-    const X = xScaleFn(histArr[i]).toFixed(2);
-    const Y0 = yScaleFn(E0).toFixed(2);
-    const Y1 = yScaleFn(E1).toFixed(2);
-    line += (i === 0 ? `M${X},${Y0}` : ` L${X},${Y0}`) + ` L${X},${Y1}`;
-  }
-  const a = axisX.toFixed(2);
-  const firstY = yScaleFn(0).toFixed(2);
-  const lastY = yScaleFn(ownMax).toFixed(2);
-  return { line, fill: `${line} L${a},${lastY} L${a},${firstY} Z` };
-}
-
 // |ψ|² density path for a finite-square bundle (Tab 1 / Tab 2). Samples
 // densityAt over the engine range that the panel's x-mapping covers,
 // anchored at the bundle's prep energy. Returns '' when there's nothing
@@ -6631,6 +6667,76 @@ function shapeDensityPath(bundle, xToPxNm, anchorY, ampMax) {
   return path;
 }
 
+// Re(ψ) / Im(ψ) outline paths for a finite-square bundle (Tab 1/2),
+// anchored at the prep energy. Returns null when nothing to draw.
+function squareWavePaths(bundle, xToPx, midY, halfAmp, sampleEngMin, sampleEngMax) {
+  if (bundle.isIonised || !bundle.states || bundle.states.length === 0) return null;
+  const N = DENSITY_GRID_N;
+  const range = sampleEngMax - sampleEngMin;
+  const re = new Float64Array(N), im = new Float64Array(N);
+  let psi2Max = 0;
+  for (let i = 0; i < N; i++) {
+    const xs = sampleEngMin + (range * i) / (N - 1);
+    let reSum = 0, imSum = 0;
+    for (let k = 0; k < bundle.states.length; k++) {
+      if (bundle.probs[k] < 1e-14) continue;
+      const psi = finiteWellPsi(bundle.states[k], xs);
+      if (psi === 0) continue;
+      const c = Math.sqrt(bundle.probs[k]);
+      const ph = -bundle.states[k].E * bundle.t;
+      reSum += c * psi * Math.cos(ph);
+      imSum += c * psi * Math.sin(ph);
+    }
+    re[i] = reSum; im[i] = imSum;
+    const p2 = reSum * reSum + imSum * imSum;
+    if (p2 > psi2Max) psi2Max = p2;
+  }
+  const aMax = Math.sqrt(psi2Max);
+  if (aMax <= 0) return null;
+  let rePath = '', imPath = '';
+  for (let i = 0; i < N; i++) {
+    const xs = sampleEngMin + (range * i) / (N - 1);
+    const X = xToPx(xs).toFixed(2);
+    rePath += (i === 0 ? 'M' : ' L') + X + ',' + (midY - halfAmp * (re[i] / aMax)).toFixed(2);
+    imPath += (i === 0 ? 'M' : ' L') + X + ',' + (midY - halfAmp * (im[i] / aMax)).toFixed(2);
+  }
+  return { rePath, imPath };
+}
+
+// Re(ψ) / Im(ψ) outline paths for a shape-aware bundle (Tab 3), sampled
+// on the FD grid via psiOnGrid.
+function shapeWavePaths(bundle, xToPxNm, midY, halfAmp) {
+  const g = bundle.xGrid_nm;
+  const N = g ? g.length : 0;
+  if (bundle.isIonised || !bundle.states || bundle.states.length === 0 || N < 2) return null;
+  const re = new Float64Array(N), im = new Float64Array(N);
+  let psi2Max = 0;
+  for (let i = 0; i < N; i++) {
+    let reSum = 0, imSum = 0;
+    for (let k = 0; k < bundle.states.length; k++) {
+      if (bundle.probs[k] < 1e-14) continue;
+      const psi = psiOnGrid(bundle.states[k], g, g[i]);
+      if (psi === 0) continue;
+      const c = Math.sqrt(bundle.probs[k]);
+      const ph = -bundle.states[k].E * bundle.t;
+      reSum += c * psi * Math.cos(ph);
+      imSum += c * psi * Math.sin(ph);
+    }
+    re[i] = reSum; im[i] = imSum;
+    const p2 = reSum * reSum + imSum * imSum;
+    if (p2 > psi2Max) psi2Max = p2;
+  }
+  const aMax = Math.sqrt(psi2Max);
+  if (aMax <= 0) return null;
+  let rePath = '', imPath = '';
+  for (let i = 0; i < N; i++) {
+    const X = xToPxNm(g[i]).toFixed(2);
+    rePath += (i === 0 ? 'M' : ' L') + X + ',' + (midY - halfAmp * (re[i] / aMax)).toFixed(2);
+    imPath += (i === 0 ? 'M' : ' L') + X + ',' + (midY - halfAmp * (im[i] / aMax)).toFixed(2);
+  }
+  return { rePath, imPath };
+}
+
 // Shape-aware potential outline (Tab 3): trace V_eV vs xGrid_nm, V
 // clamped to v0 so the dashed ceiling stays the visible well top.
 function shapePotentialPath(bundle, xToPxNm, floorY, ceilY) {
@@ -6648,10 +6754,12 @@ function shapePotentialPath(bundle, xToPxNm, floorY, ceilY) {
 }
 
 // ---------- Combined simulation view: finite-square wells (Tab 1/2) ----------
-function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, engineMode, wall, bg, ionisedCol, mono }) {
+function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, engineMode, psiMode, wall, bg, ionisedCol, mono }) {
   const W = 480, H = 240, PAD_L = 60, PAD_R = 4, INNER_W = W - PAD_L - PAD_R;
   const topPad = 4, floorY = H - 4;
   const nmShared = !engineMode && !normalize;
+  const showDensity = psiMode === undefined || psiMode === 'density';
+  const showWave = psiMode === 'wavefunction';
   function yForE(E) {
     if (!Number.isFinite(E)) return floorY;
     const f = Math.max(0, Math.min(1, E / eHistMax));
@@ -6667,6 +6775,10 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
   return (
     <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
       style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
+      {/* Clip the curves / dots horizontally to the plot area (tall rect ⇒
+          vertical overflow into the position histogram below is still
+          allowed), so leakage tails never paint past the x-axis. */}
+      <defs><clipPath id="ovSimSqXClip"><rect x={PAD_L} y={-2000} width={INNER_W} height={4000} /></clipPath></defs>
       <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY} stroke={wall} strokeWidth={1.2} opacity={0.4} />
       {bundles.map((b, bi) => {
         const xToPx = makeXToPx(b.lengthNm);
@@ -6674,6 +6786,7 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
         const wallLeftX = xToPx(0), wallRightX = xToPx(L);
         const anchorY = yForE(Number.isFinite(b.eSet) ? b.eSet : b.v0 / 2);
         const ampMax = Math.max(0, Math.min(70, anchorY - topPad - 4));
+        const halfAmp = Math.max(0, Math.min(35, anchorY - topPad - 4));
         let sMin, sMax;
         if (!nmShared) { sMin = X_PLOT_MIN; sMax = X_PLOT_MAX; }
         else {
@@ -6682,7 +6795,8 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
           sMin = (xMinNm - leftOff) / b.lengthNm;
           sMax = (xMaxNm - leftOff) / b.lengthNm;
         }
-        const dPath = squareDensityPath(b, xToPx, anchorY, ampMax, sMin, sMax);
+        const dPath = showDensity ? squareDensityPath(b, xToPx, anchorY, ampMax, sMin, sMax) : '';
+        const waves = showWave ? squareWavePaths(b, xToPx, anchorY, halfAmp, sMin, sMax) : null;
         return (
           <g key={bi}>
             {!b.classical && (
@@ -6693,13 +6807,17 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
               <line x1={PAD_L} x2={PAD_L + INNER_W} y1={anchorY} y2={anchorY}
                 stroke={b.col} strokeWidth={1} strokeDasharray="2 4" opacity={0.4} />
             )}
-            {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
-            {b.recent && b.recent.map((m, i) => {
-              const op = Math.max(0, 1 - m.age / FLASH_AGE);
-              const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
-              const E = Number.isFinite(m.E) ? m.E : (Number.isFinite(b.eSet) ? b.eSet : 0);
-              return <circle key={i} cx={xToPx(m.x)} cy={yForE(E)} r={rr} fill={b.col} opacity={op * 0.8} />;
-            })}
+            <g clipPath="url(#ovSimSqXClip)">
+              {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
+              {waves && waves.rePath && <path d={waves.rePath} fill="none" stroke={b.col} strokeWidth={1.7} />}
+              {waves && waves.imPath && <path d={waves.imPath} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />}
+              {b.recent && b.recent.map((m, i) => {
+                const op = Math.max(0, 1 - m.age / FLASH_AGE);
+                const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+                const E = Number.isFinite(m.E) ? m.E : (Number.isFinite(b.eSet) ? b.eSet : 0);
+                return <circle key={i} cx={xToPx(m.x)} cy={yForE(E)} r={rr} fill={b.col} opacity={op * 0.8} />;
+              })}
+            </g>
             {b.isIonised && (
               <text x={W / 2} y={12 + bi * 14} textAnchor="middle" fill={ionisedCol} fontFamily={mono} fontSize={11}>
                 {b.label} ionised
@@ -6713,9 +6831,11 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
 }
 
 // ---------- Combined simulation view: shape-aware wells (Tab 3) ----------
-function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, wall, bg, ionisedCol, mono }) {
+function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, psiMode, wall, bg, ionisedCol, mono }) {
   const W = 480, H = 240, PAD_L = 60, PAD_R = 4, INNER_W = W - PAD_L - PAD_R;
   const topPad = 4, floorY = H - 4, MARGIN = 0.3;
+  const showDensity = psiMode === undefined || psiMode === 'density';
+  const showWave = psiMode === 'wavefunction';
   function yForE(E) {
     if (!Number.isFinite(E)) return floorY;
     const f = Math.max(0, Math.min(1, E / eHistMax));
@@ -6728,31 +6848,49 @@ function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, wal
     const r = wMax - wMin;
     return (xNm) => PAD_L + ((xNm - wMin) / r) * INNER_W;
   }
+  const onPanel = (px) => px >= PAD_L && px <= PAD_L + INNER_W;
   return (
     <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
       style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
+      {/* Clip the potential / curves / dots horizontally to the plot area
+          (the rect is tall so wavefunction lobes still overflow downward
+          into the position histogram). Fixes the Coulomb/parabolic tails
+          painting past the x-axis edges. */}
+      <defs><clipPath id="ovSimShXClip"><rect x={PAD_L} y={-2000} width={INNER_W} height={4000} /></clipPath></defs>
       <line x1={PAD_L} x2={PAD_L + INNER_W} y1={floorY} y2={floorY} stroke={wall} strokeWidth={1.2} opacity={0.4} />
       {bundles.map((b, bi) => {
         const xToPx = makeXToPx(b.lengthNm);
         const ceilY = yForE(b.v0);
         const anchorY = yForE(Number.isFinite(b.eSet) ? b.eSet : b.v0 / 2);
         const ampMax = Math.max(0, Math.min(70, anchorY - topPad - 4));
+        const halfAmp = Math.max(0, Math.min(35, anchorY - topPad - 4));
         const potP = shapePotentialPath(b, xToPx, floorY, ceilY);
-        const dPath = shapeDensityPath(b, xToPx, anchorY, ampMax);
+        const dPath = showDensity ? shapeDensityPath(b, xToPx, anchorY, ampMax) : '';
+        const waves = showWave ? shapeWavePaths(b, xToPx, anchorY, halfAmp) : null;
+        // Box positional limits: classical turning points where V(x)=E_set
+        // (= ±L/2 for a square well; energy-dependent for parabolic/Coulomb).
+        const twL = Number.isFinite(b.xTurningNm) && b.xTurningNm > 0 ? xToPx(-b.xTurningNm) : null;
+        const twR = Number.isFinite(b.xTurningNm) && b.xTurningNm > 0 ? xToPx(+b.xTurningNm) : null;
         return (
           <g key={bi}>
-            {potP && <path d={potP} fill="none" stroke={b.col} strokeWidth={2} strokeLinejoin="round" opacity={0.55} />}
+            <g clipPath="url(#ovSimShXClip)">
+              {potP && <path d={potP} fill="none" stroke={b.col} strokeWidth={2} strokeLinejoin="round" opacity={0.55} />}
+              {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
+              {waves && waves.rePath && <path d={waves.rePath} fill="none" stroke={b.col} strokeWidth={1.7} />}
+              {waves && waves.imPath && <path d={waves.imPath} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />}
+              {b.recent && b.recent.map((m, i) => {
+                const op = Math.max(0, 1 - m.age / FLASH_AGE);
+                const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+                const xNm = (m.x - 0.5) * b.lengthNm;
+                return <circle key={i} cx={xToPx(xNm)} cy={yForE(Number.isFinite(m.E) ? m.E : 0)} r={rr} fill={b.col} opacity={op * 0.8} />;
+              })}
+            </g>
             {Number.isFinite(b.eSet) && (
               <line x1={PAD_L} x2={PAD_L + INNER_W} y1={anchorY} y2={anchorY}
                 stroke={b.col} strokeWidth={1} strokeDasharray="2 4" opacity={0.4} />
             )}
-            {dPath && <path d={dPath} fill={b.col} fillOpacity={0.22} stroke={b.col} strokeWidth={1.6} />}
-            {b.recent && b.recent.map((m, i) => {
-              const op = Math.max(0, 1 - m.age / FLASH_AGE);
-              const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
-              const xNm = (m.x - 0.5) * b.lengthNm;
-              return <circle key={i} cx={xToPx(xNm)} cy={yForE(Number.isFinite(m.E) ? m.E : 0)} r={rr} fill={b.col} opacity={op * 0.8} />;
-            })}
+            {twL !== null && onPanel(twL) && <line x1={twL} x2={twL} y1={ceilY} y2={floorY} stroke={b.col} strokeWidth={1.5} opacity={0.75} />}
+            {twR !== null && onPanel(twR) && <line x1={twR} x2={twR} y1={ceilY} y2={floorY} stroke={b.col} strokeWidth={1.5} opacity={0.75} />}
             {b.isIonised && (
               <text x={W / 2} y={12 + bi * 14} textAnchor="middle" fill={ionisedCol} fontFamily={mono} fontSize={11}>
                 {b.label} ionised
@@ -6766,7 +6904,10 @@ function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, wal
 }
 
 // ---------- Combined energy histogram (both series on a shared eV axis) ----------
-function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono }) {
+// Bars per series (semi-transparent, in the system colour) matching the
+// single-system histogram style; bound + continuum theory drawn as bold
+// solid lines. Click toggles the linear/log density axis.
+function OverlayEnergyHistogram({ bundles, eDisplayMax, logY, onToggleLogY, ink, inkDim, rule, mono }) {
   void ink;
   const W = 130, H = 240, PAD = { l: 4, r: 34, t: 4, b: 4 };
   const innerW = W - PAD.l - PAD.r, innerH = H - PAD.t - PAD.b;
@@ -6774,11 +6915,20 @@ function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono 
   let dataMax = 0;
   bundles.forEach((b) => b.hist.forEach((v) => { if (v > dataMax) dataMax = v; }));
   const linXMax = Math.max(dataMax, 0.005) * 1.25;
+  const logXMax = Math.max(dataMax, 0.005), logXMin = logXMax / 1000;
   function yScale(E) { return PAD.t + innerH - Math.max(0, Math.min(1, E / eDisplayMax)) * innerH; }
-  function xScale(d) { return axisX - Math.min(1, d / linXMax) * innerW; }
+  function xScale(d) {
+    if (!logY) return axisX - Math.min(1, d / linXMax) * innerW;
+    if (d <= 0) return axisX;
+    const lv = Math.log10(Math.max(d, logXMin));
+    const frac = (lv - Math.log10(logXMin)) / (Math.log10(logXMax) - Math.log10(logXMin));
+    return axisX - Math.max(0, Math.min(1, frac)) * innerW;
+  }
   const yTicks = [0, eDisplayMax * 0.25, eDisplayMax * 0.5, eDisplayMax * 0.75, eDisplayMax];
   return (
-    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} style={{ display: 'block' }}>
+    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`}
+      style={{ display: 'block', cursor: onToggleLogY ? 'pointer' : 'default' }}
+      onClick={onToggleLogY}>
       <defs><clipPath id="ovEnergyClip"><rect x={baseX} y={PAD.t} width={innerW} height={innerH} /></clipPath></defs>
       <line x1={axisX} x2={axisX} y1={PAD.t} y2={PAD.t + innerH} stroke={rule} strokeWidth={1.5} />
       {yTicks.map((tE, i) => {
@@ -6794,14 +6944,14 @@ function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono 
       })}
       <g clipPath="url(#ovEnergyClip)">
         {bundles.map((b, bi) => {
-          const sp = buildEnergyStepPaths(b.hist, b.eHistMaxOwn, xScale, yScale, axisX);
-          if (!sp) return null;
-          return (
-            <g key={bi}>
-              <path d={sp.fill} fill={b.col} fillOpacity={0.25} stroke="none" />
-              <path d={sp.line} fill="none" stroke={b.col} strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-            </g>
-          );
+          const NB = b.hist.length, ownMax = b.eHistMaxOwn;
+          return b.hist.map((v, i) => {
+            if (v <= 0) return null;
+            const E0 = (ownMax * i) / NB, E1 = (ownMax * (i + 1)) / NB;
+            const Xleft = xScale(v), Yt = yScale(E1), Yb = yScale(E0);
+            return <rect key={`${bi}-${i}`} x={Xleft} y={Yt + 0.3} width={Math.max(1, axisX - Xleft)}
+              height={Math.max(1, Yb - Yt - 0.6)} fill={b.col} opacity={0.5} />;
+          });
         })}
         {bundles.map((b, bi) => {
           if (!b.theory) return null;
@@ -6815,8 +6965,8 @@ function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono 
           draw(b.theory.bound, 0, b.v0);
           draw(b.theory.continuum, b.v0, eDisplayMax);
           return segs.map((d, i) => (
-            <path key={`${bi}-${i}`} d={d} fill="none" stroke={b.col} strokeWidth={1.4}
-              strokeDasharray="3 3" opacity={0.85} vectorEffect="non-scaling-stroke" />
+            <path key={`${bi}-${i}`} d={d} fill="none" stroke={b.col} strokeWidth={2.2}
+              opacity={1} vectorEffect="non-scaling-stroke" />
           ));
         })}
       </g>
@@ -6835,12 +6985,16 @@ function OverlayEnergyHistogram({ bundles, eDisplayMax, ink, inkDim, rule, mono 
         const op = Math.max(0, 1 - m.age / FLASH_AGE);
         return <line key={`${bi}-${i}`} x1={axisX - 4} x2={axisX + 4} y1={tY} y2={tY} stroke={b.col} strokeWidth={2.5} opacity={op} />;
       }))}
+      {logY && <text x={baseX + 2} y={PAD.t + 9} fontSize={10} fontFamily={mono} fill={inkDim} opacity={0.7}>log</text>}
       <text x={axisX + 5} y={PAD.t + 9} textAnchor="start" fontSize={11} fontFamily={mono} fontStyle="italic" fill={inkDim}>P(E)</text>
     </svg>
   );
 }
 
 // ---------- Combined position histogram (both series on a shared x-axis) ----------
+// Bars per series (semi-transparent, in the system colour) matching the
+// single-system histogram style; theory as a bold solid line + faint
+// fill; each well's box limits drawn as vertical wall markers.
 function OverlayPositionHistogram({ bundles, xMinNm, xMaxNm, normalize, engineMode, inkDim, rule, mono, centredX }) {
   const W = 480, H = 200, PAD = { l: 60, r: 4, t: 4, b: 34 };
   const innerW = W - PAD.l - PAD.r, innerH = H - PAD.t - PAD.b;
@@ -6858,6 +7012,7 @@ function OverlayPositionHistogram({ bundles, xMinNm, xMaxNm, normalize, engineMo
     const leftOff = centerNm - lengthNm / 2;
     return (xEng) => PAD.l + ((leftOff + xEng * lengthNm - xMinNm) / xRangeNm) * innerW;
   }
+  const onPanel = (px) => px >= PAD.l && px <= PAD.l + innerW;
   const xPct = (xVB) => `${(xVB / W) * 100}%`;
   // Axis ticks. nm-shared mode labels the window edges + centre in nm
   // relative to the well centre (so the midline reads 0); engine /
@@ -6887,23 +7042,46 @@ function OverlayPositionHistogram({ bundles, xMinNm, xMaxNm, normalize, engineMo
         <defs><clipPath id="ovPosClip"><rect x={PAD.l} y={PAD.t} width={innerW} height={innerH} /></clipPath></defs>
         <line x1={PAD.l} x2={PAD.l} y1={PAD.t} y2={axisY} stroke={rule} strokeWidth={1.5} />
         <line x1={PAD.l} x2={PAD.l + innerW} y1={axisY} y2={axisY} stroke={rule} strokeWidth={1.5} />
+        {/* Box positional limits — each well's walls (engine [0,1] for a
+            square well; classical turning points for a shape). Drawn
+            before the bars so the data reads on top. */}
+        {bundles.map((b, bi) => {
+          const xToPx = makeXToPx(b.lengthNm);
+          const w = b.wallsEngineX || [0, L];
+          return [w[0], w[1]].map((we, j) => {
+            const X = xToPx(we);
+            if (!onPanel(X)) return null;
+            return <line key={`w${bi}-${j}`} x1={X} x2={X} y1={PAD.t} y2={axisY} stroke={b.col} strokeWidth={2} opacity={0.45} />;
+          });
+        })}
         <g clipPath="url(#ovPosClip)">
           {bundles.map((b, bi) => {
             const xToPx = makeXToPx(b.lengthNm);
-            const sp = buildPosStepPaths(b.hist, xToPx, yScale, axisY);
-            if (!sp) return null;
-            return (
-              <g key={bi}>
-                <path d={sp.fill} fill={b.col} fillOpacity={0.25} stroke="none" />
-                <path d={sp.line} fill="none" stroke={b.col} strokeWidth={1.6} vectorEffect="non-scaling-stroke" />
-              </g>
-            );
+            const NB = b.hist.length;
+            return b.hist.map((v, i) => {
+              if (v <= 0) return null;
+              const xs0 = X_PLOT_MIN + (i / NB) * X_PLOT_RANGE;
+              const xs1 = X_PLOT_MIN + ((i + 1) / NB) * X_PLOT_RANGE;
+              const X = xToPx(xs0), X2 = xToPx(xs1);
+              if (X2 < PAD.l || X > PAD.l + innerW) return null;
+              const Y = yScale(v);
+              return <rect key={`${bi}-${i}`} x={X + 0.3} y={Y} width={Math.max(1, X2 - X - 0.6)}
+                height={axisY - Y} fill={b.col} opacity={0.5} />;
+            });
           })}
           {bundles.map((b, bi) => {
             if (!b.theory) return null;
             const xToPx = makeXToPx(b.lengthNm);
             const line = b.theory.map((p, i) => `${i === 0 ? 'M' : 'L'}${xToPx(p.x).toFixed(2)},${yScale(p.d).toFixed(2)}`).join(' ');
-            return <path key={bi} d={line} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.85} vectorEffect="non-scaling-stroke" />;
+            const firstX = xToPx(b.theory[0].x).toFixed(2);
+            const lastX = xToPx(b.theory[b.theory.length - 1].x).toFixed(2);
+            const fill = `${line} L${lastX},${axisY.toFixed(2)} L${firstX},${axisY.toFixed(2)} Z`;
+            return (
+              <g key={bi}>
+                <path d={fill} fill={b.col} fillOpacity={0.12} stroke="none" />
+                <path d={line} fill="none" stroke={b.col} strokeWidth={2.2} opacity={1} vectorEffect="non-scaling-stroke" />
+              </g>
+            );
           })}
         </g>
         {bundles.map((b, bi) => {
@@ -6976,7 +7154,7 @@ function OverlayComparisonSummary({ a, b, ink, inkDim, mono }) {
 }
 
 // ---------- Header strip shared by every overlay panel ----------
-function OverlayPanelHeader({ aLabel, bLabel, aCol, bCol, normalize, setNormalize }) {
+function OverlayPanelHeader({ aLabel, bLabel, aCol, bCol, normalize, setNormalize, psiMode, setPsiMode }) {
   const dot = (c) => ({ display: 'inline-block', width: 9, height: 9, borderRadius: '50%', background: c, marginRight: 5, verticalAlign: 'middle' });
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
@@ -6988,14 +7166,28 @@ function OverlayPanelHeader({ aLabel, bLabel, aCol, bCol, normalize, setNormaliz
           <span style={{ ...dot(bCol), marginLeft: 12 }} />{bLabel}
         </div>
       </div>
-      {setNormalize && (
-        <SegmentedToggle
-          value={normalize ? 'norm' : 'scale'}
-          onChange={(v) => setNormalize(v === 'norm')}
-          options={[{ value: 'scale', label: 'To scale' }, { value: 'norm', label: 'Normalize widths' }]}
-          accent={COL.accent} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
-        />
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {setPsiMode && (
+          <SegmentedToggle
+            value={psiMode}
+            onChange={setPsiMode}
+            options={[
+              { value: 'density',      label: '|ψ|²' },
+              { value: 'wavefunction', label: 'ψ' },
+              { value: 'off',          label: 'Off' },
+            ]}
+            accent={COL.quantum} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
+          />
+        )}
+        {setNormalize && (
+          <SegmentedToggle
+            value={normalize ? 'norm' : 'scale'}
+            onChange={(v) => setNormalize(v === 'norm')}
+            options={[{ value: 'scale', label: 'To scale' }, { value: 'norm', label: 'Normalize widths' }]}
+            accent={COL.accent} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono}
+          />
+        )}
+      </div>
     </div>
   );
 }
@@ -7024,11 +7216,13 @@ function Tab1OverlayRow(p) {
   const b = { label: 'Quantum', col: COL.quantum, nBound: String(p.states.length), meanX: fmtL(p.qxMean), meanE: fmtE(p.qeMean), pOut: fmtPctV(p.qLeakFrac), pIon: fmtPctV(p.qIonisedFrac), ionised: p.qIonisedFrac > 0.01 };
   return (
     <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <OverlayPanelHeader aLabel="Classical" bLabel="Quantum" aCol={COL.classical} bCol={COL.quantum} />
+      <OverlayPanelHeader aLabel="Classical" bLabel="Quantum" aCol={COL.classical} bCol={COL.quantum}
+        psiMode={p.overlayPsiMode} setPsiMode={p.setOverlayPsiMode} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
-        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} engineMode={true}
+        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} engineMode={true} psiMode={p.overlayPsiMode}
           wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
         <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          logY={!!p.logEnergy} onToggleLogY={p.setLogEnergy ? () => p.setLogEnergy((v) => !v) : undefined}
           ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
         <OverlayPositionHistogram bundles={posBundles} engineMode={true} centredX={true}
           inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
@@ -7064,11 +7258,13 @@ function Tab2OverlayRow(p) {
   return (
     <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <OverlayPanelHeader aLabel="System A" bLabel="System B" aCol={COL.sysA} bCol={COL.sysB}
-        normalize={norm} setNormalize={p.setOverlayNormalize} />
+        normalize={norm} setNormalize={p.setOverlayNormalize}
+        psiMode={p.overlayPsiMode} setPsiMode={p.setOverlayPsiMode} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
-        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} normalize={norm}
+        <OverlaySquareSimView bundles={simBundles} eHistMax={eDisp} normalize={norm} psiMode={p.overlayPsiMode}
           xMinNm={p.xMinNm} xMaxNm={p.xMaxNm} wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
         <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          logY={!!p.logEnergy} onToggleLogY={p.setLogEnergy ? () => p.setLogEnergy((v) => !v) : undefined}
           ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
         <OverlayPositionHistogram bundles={posBundles} normalize={norm} centredX={true}
           xMinNm={p.xMinNm} xMaxNm={p.xMaxNm} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
@@ -7085,16 +7281,16 @@ function Tab3OverlayRow(p) {
   const eDisp = Math.max(p.eHistMaxEvA, p.eHistMaxEvB);
   const norm = p.overlayNormalize;
   const simBundles = [
-    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, xGrid_nm: p.xGridA, V_eV: p.vEvA },
-    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, xGrid_nm: p.xGridB, V_eV: p.vEvB },
+    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, xGrid_nm: p.xGridA, V_eV: p.vEvA, xTurningNm: p.xTurningNmA },
+    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, xGrid_nm: p.xGridB, V_eV: p.vEvB, xTurningNm: p.xTurningNmB },
   ];
   const energyBundles = [
     { col: COL.sysA, hist: p.qEHistDensityA, eHistMaxOwn: p.eHistMaxEvA, v0: p.v0A, theory: p.qETheoryA, eigen: p.eigenA, recent: p.qRecentEA },
     { col: COL.sysB, hist: p.qEHistDensityB, eHistMaxOwn: p.eHistMaxEvB, v0: p.v0B, theory: p.qETheoryB, eigen: p.eigenB, recent: p.qRecentEB },
   ];
   const posBundles = [
-    { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA },
-    { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB },
+    { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA, wallsEngineX: p.wallsEngineXA },
+    { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB, wallsEngineX: p.wallsEngineXB },
   ];
   const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${((m - 0.5) * len).toFixed(2)} nm` : '—';
   const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(2) : '—';
@@ -7106,11 +7302,13 @@ function Tab3OverlayRow(p) {
   return (
     <section style={{ ...panelStyle(), padding: '10px 14px 10px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <OverlayPanelHeader aLabel="System A" bLabel="System B" aCol={COL.sysA} bCol={COL.sysB}
-        normalize={norm} setNormalize={p.setOverlayNormalize} />
+        normalize={norm} setNormalize={p.setOverlayNormalize}
+        psiMode={p.overlayPsiMode} setPsiMode={p.setOverlayPsiMode} />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px', gap: 2 }}>
-        <OverlayShapeSimView bundles={simBundles} eHistMax={eDisp} normalize={norm}
+        <OverlayShapeSimView bundles={simBundles} eHistMax={eDisp} normalize={norm} psiMode={p.overlayPsiMode}
           xMinNm={xMinNm} xMaxNm={xMaxNm} wall={COL.ink} bg={COL.panel} ionisedCol={COL.ionised} mono={FONTS.mono} />
         <OverlayEnergyHistogram bundles={energyBundles} eDisplayMax={eDisp}
+          logY={!!p.logEnergy} onToggleLogY={p.setLogEnergy ? () => p.setLogEnergy((v) => !v) : undefined}
           ink={COL.ink} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
         <OverlayPositionHistogram bundles={posBundles} normalize={norm} centredX={true}
           xMinNm={xMinNm} xMaxNm={xMaxNm} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
@@ -8304,6 +8502,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
   // Shared display cap on bound-state count (one number governs both
   // panels — it's a UI knob, not a physical knob).
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab2.maxBoundCap', 8);
+  const [histBins,       setHistBins]       = useSavedState('redux:tab2.histBins', NBINS_X); // display histogram resolution (≤ native)
   // Per-tab preferences shared via the Settings modal. Same shape as
   // tab 1's, namespaced under `redux:tab2.*` so the two tabs can
   // diverge if the student wants.
@@ -8381,6 +8580,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
   const [showTheory, setShowTheory] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);       // superimpose A + B on one set of plots
   const [overlayNormalize, setOverlayNormalize] = useState(false); // overlay: rescale each well to fill equally
+  const [overlayPsiMode, setOverlayPsiMode] = useState('density');  // overlay: |ψ|² / ψ / Off in the combined sim view
   const [psiModeA,   setPsiModeA]   = useSavedState('redux:tab2.A.psiMode', 'density');
   const [psiModeB,   setPsiModeB]   = useSavedState('redux:tab2.B.psiMode', 'density');
   const [logEnergy,  setLogEnergy]  = useState(false);
@@ -8821,6 +9021,9 @@ function Tab2Content({ activeTab, onChangeTab }) {
       n_position_bins: NBINS_X, x_plot_min: X_PLOT_MIN, x_plot_max: X_PLOT_MAX,
       n_energy_bins: NBINS_E,
       show_eigenstates: showEigen, show_theory: showTheory,
+      // Presentation/view state — lets a preset reopen in the same view.
+      show_overlay: showOverlay, overlay_normalize: overlayNormalize,
+      overlay_psi_mode: overlayPsiMode, hist_bins: histBins,
       links: {
         L: linkedL, m_eff: linkedMEff, v0: linkedV0,
         gamma: linkedGamma, sigma: linkedSigma, energy: linkedEnergy,
@@ -8982,6 +9185,11 @@ function Tab2Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
 
     // Reconstruct counts from density × total × binWidth, per side.
     const xBinW = X_PLOT_RANGE / NBINS_X;
@@ -9122,6 +9330,11 @@ function Tab2Content({ activeTab, onChangeTab }) {
   const qEHistDensityA = qECountA > 0 ? Array.from(qEHistARef.current).map((c) => c / (qECountA * eBinWidthEvA)) : Array(NBINS_E).fill(0);
   const qXHistDensityB = qXCountB > 0 ? Array.from(qXHistBRef.current).map((c) => c / (qXCountB * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensityB = qECountB > 0 ? Array.from(qEHistBRef.current).map((c) => c / (qECountB * eBinWidthEvB)) : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports use the native arrays above).
+  const qXHistDispA = rebinDensity(qXHistDensityA, histBins);
+  const qEHistDispA = rebinDensity(qEHistDensityA, histBins);
+  const qXHistDispB = rebinDensity(qXHistDensityB, histBins);
+  const qEHistDispB = rebinDensity(qEHistDensityB, histBins);
   const qxMeanA = qXCountA > 0 ? qXSumARef.current / qXCountA : null;
   const qeMeanA = qECountA > 0 ? qESumARef.current / qECountA : null;
   const qIonisedFracA = qECountA > 0 ? qIonisedCountARef.current / qECountA : 0;
@@ -9233,6 +9446,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
           onClose={() => setSettingsOpen(false)}
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
+          histBins={histBins}             setHistBins={setHistBins}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -9577,6 +9791,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
         {showOverlay ? (
           <Tab2OverlayRow
             overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
+            overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
+            logEnergy={logEnergy} setLogEnergy={setLogEnergy}
             lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
             energyA={energyA} energyB={energyB}
             statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
@@ -9584,8 +9800,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             isIonisedA={isIonisedA} isIonisedB={isIonisedB}
             qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
             qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
-            qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
-            qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+            qXHistDensityA={qXHistDispA} qXHistDensityB={qXHistDispB}
+            qEHistDensityA={qEHistDispA} qEHistDensityB={qEHistDispB}
             qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
             qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
             qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
@@ -9607,8 +9823,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qXLatest={qXLatestARef.current}
             qRecentX={qRecentXARef.current}
             qRecentE={qRecentEARef.current}
-            qXHistDensity={qXHistDensityA}
-            qEHistDensity={qEHistDensityA}
+            qXHistDensity={qXHistDispA}
+            qEHistDensity={qEHistDispA}
             qxMean={qxMeanA} qeMean={qeMeanA}
             qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
             qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA}
@@ -9628,8 +9844,8 @@ function Tab2Content({ activeTab, onChangeTab }) {
             qXLatest={qXLatestBRef.current}
             qRecentX={qRecentXBRef.current}
             qRecentE={qRecentEBRef.current}
-            qXHistDensity={qXHistDensityB}
-            qEHistDensity={qEHistDensityB}
+            qXHistDensity={qXHistDispB}
+            qEHistDensity={qEHistDispB}
             qxMean={qxMeanB} qeMean={qeMeanB}
             qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
             qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB}
@@ -9728,6 +9944,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [mEffB,   setMEffB]   = useSavedState('redux:tab3.B.mEffMe',   1.0);
   const [v0B,     setV0B]     = useSavedState('redux:tab3.B.v0eV',     5.0);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab3.maxBoundCap', 8);
+  const [histBins,       setHistBins]       = useSavedState('redux:tab3.histBins', NBINS_X); // display histogram resolution (≤ native)
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:tab3.pauseIncrement', 10000);
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:tab3.waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',            'en');
@@ -9809,6 +10026,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [showTheory, setShowTheory] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);       // superimpose A + B on one set of plots
   const [overlayNormalize, setOverlayNormalize] = useState(false); // overlay: rescale each well to fill equally
+  const [overlayPsiMode, setOverlayPsiMode] = useState('density');  // overlay: |ψ|² / ψ / Off in the combined sim view
   const [psiModeA,   setPsiModeA]   = useSavedState('redux:tab3.A.psiMode', 'density');
   const [psiModeB,   setPsiModeB]   = useSavedState('redux:tab3.B.psiMode', 'density');
   const [, setTick] = useState(0);
@@ -10255,6 +10473,9 @@ function Tab3Content({ activeTab, onChangeTab }) {
       n_position_bins: NBINS_X, x_plot_min: X_PLOT_MIN, x_plot_max: X_PLOT_MAX,
       n_energy_bins: NBINS_E,
       show_eigenstates: showEigen, show_theory: showTheory,
+      // Presentation/view state — lets a preset reopen in the same view.
+      show_overlay: showOverlay, overlay_normalize: overlayNormalize,
+      overlay_psi_mode: overlayPsiMode, hist_bins: histBins,
       links: {
         shape: linkedShape,
         L: linkedL, m_eff: linkedMEff, v0: linkedV0,
@@ -10474,6 +10695,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
     restoreSideHistogramsFromPayload(payload, m, 'A');
     restoreSideHistogramsFromPayload(payload, m, 'B');
     setTick((t) => t + 1);
@@ -10566,6 +10792,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
     restoreSideHistogramsFromPayload(payload, m, 'A');
     restoreSideHistogramsFromPayload(payload, m, 'B');
     setTick((t) => t + 1);
@@ -10611,6 +10842,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const qEHistDensityA = qECountA > 0 ? Array.from(qEHistARef.current).map((c) => c / (qECountA * eBinWA))      : Array(NBINS_E).fill(0);
   const qXHistDensityB = qXCountB > 0 ? Array.from(qXHistBRef.current).map((c) => c / (qXCountB * xBinWidth)) : Array(NBINS_X).fill(0);
   const qEHistDensityB = qECountB > 0 ? Array.from(qEHistBRef.current).map((c) => c / (qECountB * eBinWB))      : Array(NBINS_E).fill(0);
+  // Display-only re-binned copies (exports use the native arrays above).
+  const qXHistDispA = rebinDensity(qXHistDensityA, histBins);
+  const qEHistDispA = rebinDensity(qEHistDensityA, histBins);
+  const qXHistDispB = rebinDensity(qXHistDensityB, histBins);
+  const qEHistDispB = rebinDensity(qEHistDensityB, histBins);
   const qxMeanA = qXCountA > 0 ? qXSumARef.current / qXCountA : null;
   const qxMeanB = qXCountB > 0 ? qXSumBRef.current / qXCountB : null;
   const qeMeanA = qECountA > 0 ? qESumARef.current / qECountA : null;
@@ -10896,6 +11132,10 @@ function Tab3Content({ activeTab, onChangeTab }) {
       {showOverlay ? (
         <Tab3OverlayRow
           overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
+          overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
+          logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          xTurningNmA={xTurningNmA} xTurningNmB={xTurningNmB}
+          wallsEngineXA={wallsEngineXA} wallsEngineXB={wallsEngineXB}
           lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
           energyA={energyA} energyB={energyB}
           statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
@@ -10904,8 +11144,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xGridA={resultA.xGrid_nm} xGridB={resultB.xGrid_nm} vEvA={resultA.V_eV} vEvB={resultB.V_eV}
           qRecentXA={qRecentXARef.current} qRecentXB={qRecentXBRef.current}
           qRecentEA={qRecentEARef.current} qRecentEB={qRecentEBRef.current}
-          qXHistDensityA={qXHistDensityA} qXHistDensityB={qXHistDensityB}
-          qEHistDensityA={qEHistDensityA} qEHistDensityB={qEHistDensityB}
+          qXHistDensityA={qXHistDispA} qXHistDensityB={qXHistDispB}
+          qEHistDensityA={qEHistDispA} qEHistDensityB={qEHistDispB}
           qxMeanA={qxMeanA} qxMeanB={qxMeanB} qeMeanA={qeMeanA} qeMeanB={qeMeanB}
           qLeakFracA={qLeakFracA} qLeakFracB={qLeakFracB}
           qIonisedFracA={qIonisedFracA} qIonisedFracB={qIonisedFracB}
@@ -10927,7 +11167,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           isIonised={isIonisedA} probs={probsA}
           tCurrent={tARef.current} qXLatest={qXLatestARef.current}
           qRecentX={qRecentXARef.current} qRecentE={qRecentEARef.current}
-          qXHistDensity={qXHistDensityA} qEHistDensity={qEHistDensityA}
+          qXHistDensity={qXHistDispA} qEHistDensity={qEHistDispA}
           qxMean={qxMeanA} qeMean={qeMeanA}
           qIonisedFrac={qIonisedFracA} qLeakFrac={qLeakFracA}
           psiMode={psiModeA} setPsiMode={setPsiModeA}
@@ -10949,7 +11189,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           isIonised={isIonisedB} probs={probsB}
           tCurrent={tBRef.current} qXLatest={qXLatestBRef.current}
           qRecentX={qRecentXBRef.current} qRecentE={qRecentEBRef.current}
-          qXHistDensity={qXHistDensityB} qEHistDensity={qEHistDensityB}
+          qXHistDensity={qXHistDispB} qEHistDensity={qEHistDispB}
           qxMean={qxMeanB} qeMean={qeMeanB}
           qIonisedFrac={qIonisedFracB} qLeakFrac={qLeakFracB}
           psiMode={psiModeB} setPsiMode={setPsiModeB}
@@ -11080,6 +11320,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
               <Stepper value={pauseIncrement} onChange={setPauseIncrement} min={1000} max={100000} step={1000} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Max bound states shown</div>
               <Stepper value={maxBoundCap} onChange={setMaxBoundCap} min={1} max={MAX_BOUND_STATES_DISPLAY} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div title={`Bins used to draw the histograms (10–${NBINS_X}). Plotting only — the simulation and the exported CSV/JSON always keep the full ${NBINS_X}-bin resolution, so saved data can be re-binned afterwards.`}>Histogram bins (display)</div>
+              <Stepper value={histBins} onChange={setHistBins} min={10} max={NBINS_X} step={10} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Wavefunction time multiplier</div>
               <Stepper value={waveTimeMult} onChange={setWaveTimeMult} min={0.1} max={10} step={0.1} decimals={1} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Random seed (0 = unseeded)</div>

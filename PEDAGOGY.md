@@ -74,6 +74,14 @@ Sign convention: floor at $0$, asymptote at $V_0$ on every shape. The softened C
 
 The Spectroscopy panel from Tab 2 ports unchanged. The chemistry payoff is sharper than in Tab 2 because the spacings *qualitatively* differ across shapes: an $n=1 \to n=2$ transition in a parabolic well costs $\hbar \omega$; the same transition in a Coulomb-like well costs much more because the lower spacings are far wider. Confinement-shape-determines-absorption-spectrum, made quantitative.
 
+## Overlay simulations – superimposing instead of comparing side-by-side
+
+The side-by-side layout keeps each system honest on its own axes, but two panels make the eye do the comparison. *Overlay simulations* collapses them onto one shared set of axes so the comparison is literal: both $|\psi|^2$, both position histograms, and both energy histograms in two fixed colours, with one A/B summary table. The pedagogy is that the interesting quantity is usually a *difference* – a peaked quantum distribution against the flat classical one (Tab 1), a small dot's discrete ladder against a large dot's dense one (Tab 2), a box spectrum against an atom-like Coulomb ladder (Tab 3) – and a difference reads fastest when the two curves cross the same gridlines.
+
+The one genuinely new control is *To scale vs Normalize widths* (Tabs 2–3). To scale draws both wells in real units on one centred axis, so a 0.5 nm dot and a 2 nm dot appear at their true relative sizes – the whole point of a quantum-dot-*size* comparison, where the size **is** the physics. Normalize widths rescales each well to the same apparent width, which throws away the size information on purpose so the student can compare wavefunction *shape* alone. Keeping these as an explicit toggle, rather than picking one, is deliberate: "compare the sizes" and "compare the shapes at matched size" are two different questions and the student should choose which they are asking.
+
+Overlay is presentation-only. It re-reads the same accumulated histograms the side-by-side panels use; nothing about the measurement model, the binning, or the exported data changes when it is on.
+
 ## What the simulation actually represents (tab 1)
 
 The system in tab 1 is a single particle in a 1D finite square well of length $L$ and depth $V_0$. Two simulations run in parallel:

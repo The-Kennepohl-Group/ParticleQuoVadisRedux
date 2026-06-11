@@ -23,7 +23,7 @@ See [PEDAGOGY.md](PEDAGOGY.md) for the design rationale, including the explicit 
 
 - **Tab 1 — Depth.** Classical vs quantum, fixed L and m. Adds a *V₀* slider, finite bound-state count, wavefunction visualisation past the walls, the ionisation threshold, and a live readout of the bound spectrum with parity, k, decay length 1/κ, and the current preparation's Born probability per state.
 - **Tab 2 — Width.** Two quantum systems side-by-side in real units (nm, m_e, eV). Each side has its own L, m\* (with a particle preset picker — electron, light/heavy effective electron, muon, proton, deuteron, alpha), and V₀. Every parameter has a link toggle so it can be locked across A and B (geometry-only comparison) or unlocked (full-flexibility comparison). Shared preparation (energy slider, σ, Γ) feeds both systems. Includes a per-side Spectroscopy panel that reports within-system transition energies and the A→B same-*n* photon energy for inter-well comparisons.
-- **Tab 3 — Shape.** Reserved for variable potential shape (rectangular / harmonic / Morse / Coulomb-like). Not yet implemented.
+- **Tab 3 — Shape.** Two quantum systems whose confining-potential *shape* differs — finite square, truncated parabolic, or softened Coulomb — at the same width and depth, so the wavefunctions and energy ladders diverge even though the box size matches. Same A↔B link toggles and Spectroscopy machinery as Tab 2.
 
 ## Try it
 
@@ -31,12 +31,14 @@ The simulation is a single HTML page. Open [`index.html`](index.html) in any mod
 
 ## How to use it
 
-Each tab has a transport bar at the top (Play / Pause / Stop, Save, Load, Settings, plus Show theory / Show eigenstates toggles), a parameters block paired with a vertical energy slider, and the simulation panels below.
+Each tab has a transport bar at the top (Play / Pause / Stop, Save, Load, Settings, plus Show theory / Show eigenstates / Overlay simulations toggles), a parameters block paired with a vertical energy slider, and the simulation panels below.
 
 - **Play / Pause** is a single toggle. **Stop** resets the accumulated measurement histograms but keeps the parameters.
-- **Save** offers CSV or JSON; both tabs use distinct schemas (`finite-well-particle-export/v1` for Tab 1, `finite-well-comparison-export/v1` for Tab 2). Filenames begin with `fwell_single_…` (Tab 1) or `fwell_pair_…` (Tab 2) for at-a-glance disambiguation. Loading the "wrong" file type into a tab prompts a cross-import flow (pick which side / which destination).
-- **Settings** holds the per-tab preferences: measurements per cycle, max bound states shown, wavefunction time speed, random seed, language.
+- **Save** offers CSV or JSON; each tab uses a distinct schema (`finite-well-particle-export/v1` for Tab 1, `finite-well-comparison-export/v1` for Tab 2, `finite-well-shape-comparison-export/v1` for Tab 3). Filenames begin with `fwell_single_…` (Tab 1) or `fwell_pair_…` (Tabs 2–3) for at-a-glance disambiguation. Loading the "wrong" file type into a tab prompts a cross-import flow (pick which side / which destination). Saved files record the current view state (overlay on/off, normalize, ψ-mode, histogram bins), so reopening a preset restores how it looked.
+- **Settings** holds the per-tab preferences: measurements per cycle, max bound states shown, histogram bins (display resolution), wavefunction time speed, random seed, language.
 - **Show eigenstates** controls eigenstate ticks on the energy slider and energy histogram, plus the live Born-probability column in Tab 1's bound-state readout. **Show theory** overlays the analytic curves on the position and energy panels.
+- **Overlay simulations** collapses the two side-by-side panels into one combined panel that superimposes both systems — both wells, both $|\psi|^2$, both measurement streams, and overlaid position/energy histograms — with a compact A/B comparison table. In Tab 1 it overlays the classical and quantum distributions; in Tabs 2–3 it compares System A vs B, with a *To scale / Normalize widths* control that switches between true relative well sizes (the quantum-dot-size comparison) and equal apparent widths (shape-only comparison).
+- **Histogram bins** (Settings) re-bins the position and energy plots for display only — the simulation and every saved CSV/JSON always keep the full native resolution, so exported data can be re-binned freely afterwards.
 - **Click any numeric value** to type a value directly; typed values clamp to each control's valid range.
 - In **Tab 2**, the chain icon next to each parameter toggles whether that parameter is linked between System A and System B. The link defaults are all on (same well in both panels on first run); unlock individual parameters to compare them. Energy linking is smart: clicking the *n* = *k* tick on one side's slider while linked pairs both sides on their own *n* = *k* eigenstate (different absolute eV, same quantum number); dragging the slider pairs by eV.
 - The **Notes** section under the simulation ("What you're looking at") and **Spectroscopy** section (Tab 2 only) are collapsible — click the chevron header to expand.

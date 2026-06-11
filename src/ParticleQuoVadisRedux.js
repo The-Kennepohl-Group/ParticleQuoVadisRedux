@@ -1642,6 +1642,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
       gamma_internal: gammaInternal,
       gamma_displayed: gammaInternal - 1,
       instrument_sigma: sigma,
+      // Presentation/view state — tolerated as extra keys by loaders;
+      // lets a saved preset reopen in the same overlay / binning view.
+      show_overlay: showOverlay,
+      overlay_psi_mode: overlayPsiMode,
+      hist_bins: histBins,
       energy_units: 'hbar^2 / (2 m L^2)',
       position_units: 'L (box length)',
       n_position_bins: NBINS_X,
@@ -1804,6 +1809,11 @@ function Tab1Content({ activeTab, onChangeTab }) {
     if (typeof m.gamma_internal === 'number') setGammaInternal(m.gamma_internal);
     if (typeof m.instrument_sigma === 'number') setSigma(m.instrument_sigma);
     setV0(m.v0);
+
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay === 'boolean') setShowOverlay(m.show_overlay);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
 
     // Reconstruct counts from density × total × binWidth.
     const xBinW = X_PLOT_RANGE / NBINS_X;
@@ -9011,6 +9021,9 @@ function Tab2Content({ activeTab, onChangeTab }) {
       n_position_bins: NBINS_X, x_plot_min: X_PLOT_MIN, x_plot_max: X_PLOT_MAX,
       n_energy_bins: NBINS_E,
       show_eigenstates: showEigen, show_theory: showTheory,
+      // Presentation/view state — lets a preset reopen in the same view.
+      show_overlay: showOverlay, overlay_normalize: overlayNormalize,
+      overlay_psi_mode: overlayPsiMode, hist_bins: histBins,
       links: {
         L: linkedL, m_eff: linkedMEff, v0: linkedV0,
         gamma: linkedGamma, sigma: linkedSigma, energy: linkedEnergy,
@@ -9172,6 +9185,11 @@ function Tab2Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
 
     // Reconstruct counts from density × total × binWidth, per side.
     const xBinW = X_PLOT_RANGE / NBINS_X;
@@ -10455,6 +10473,9 @@ function Tab3Content({ activeTab, onChangeTab }) {
       n_position_bins: NBINS_X, x_plot_min: X_PLOT_MIN, x_plot_max: X_PLOT_MAX,
       n_energy_bins: NBINS_E,
       show_eigenstates: showEigen, show_theory: showTheory,
+      // Presentation/view state — lets a preset reopen in the same view.
+      show_overlay: showOverlay, overlay_normalize: overlayNormalize,
+      overlay_psi_mode: overlayPsiMode, hist_bins: histBins,
       links: {
         shape: linkedShape,
         L: linkedL, m_eff: linkedMEff, v0: linkedV0,
@@ -10674,6 +10695,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
     restoreSideHistogramsFromPayload(payload, m, 'A');
     restoreSideHistogramsFromPayload(payload, m, 'B');
     setTick((t) => t + 1);
@@ -10766,6 +10792,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
     }
     if (typeof m.show_eigenstates === 'boolean') setShowEigen(m.show_eigenstates);
     if (typeof m.show_theory      === 'boolean') setShowTheory(m.show_theory);
+    // Presentation/view state (extra keys; absent in older files → skipped).
+    if (typeof m.show_overlay     === 'boolean') setShowOverlay(m.show_overlay);
+    if (typeof m.overlay_normalize === 'boolean') setOverlayNormalize(m.overlay_normalize);
+    if (m.overlay_psi_mode === 'density' || m.overlay_psi_mode === 'wavefunction' || m.overlay_psi_mode === 'off') setOverlayPsiMode(m.overlay_psi_mode);
+    if (typeof m.hist_bins === 'number') setHistBins(Math.max(10, Math.min(NBINS_X, Math.round(m.hist_bins))));
     restoreSideHistogramsFromPayload(payload, m, 'A');
     restoreSideHistogramsFromPayload(payload, m, 'B');
     setTick((t) => t + 1);

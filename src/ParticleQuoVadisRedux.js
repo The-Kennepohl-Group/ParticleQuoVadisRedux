@@ -2793,6 +2793,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 v0={V0}
                 eHistMax={eHistMax}
                 eSet={energy}
+                sigmaE={sigma}
                 showEigenStates={showEigen ? states : null}
               />
               <VerticalEnergyHistogram
@@ -3890,7 +3891,28 @@ function WavefunctionView({
   // compression isn't wide enough to fit the full label without
   // truncating to "n=".
   compactNLabels = false,
+  // PROTOTYPE: per-measurement energy resolution σ, in the same units as
+  // eHistMax / m.E. When > 0 each flash dot spreads vertically by ±σ (an
+  // energy error bar); the horizontal radius is aspect-corrected so σ = 0
+  // reads as a clean circle despite the panel's preserveAspectRatio="none"
+  // x-stretch. Defaults to 0 (clean circles, no spread).
+  sigmaE = 0,
 }) {
+  // PROTOTYPE: measure the rendered SVG width so flash dots can be drawn as
+  // true circles at σ = 0 despite the horizontal stretch (the vertical axis
+  // is already 1:1 in extended mode). sx = viewBox→pixel x-scale.
+  const svgRef = useRef(null);
+  const [svgPxW, setSvgPxW] = useState(0);
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return undefined;
+    const measure = () => setSvgPxW(el.clientWidth || el.getBoundingClientRect().width || 0);
+    measure();
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(measure); ro.observe(el); }
+    else { window.addEventListener('resize', measure); }
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', measure); };
+  }, []);
   // psiMode: 'density' = |ψ|², 'wavefunction' = Re ψ + Im ψ, 'off' = no curve
   const showDensity      = psiMode === 'density';
   const showWavefunction = psiMode === 'wavefunction';
@@ -4072,7 +4094,8 @@ function WavefunctionView({
   }
 
   return (
-    <svg width="100%"
+    <svg ref={svgRef}
+         width="100%"
          height={extendedY ? H : undefined}
          preserveAspectRatio={extendedY ? 'none' : undefined}
          viewBox={`0 0 ${W} ${H}`}
@@ -4195,11 +4218,20 @@ function WavefunctionView({
 
       {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
-        const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
+        // Age-based "pulse" radius in screen px (fresh = larger, fades with age).
+        const baseR = 1.5 + (1 - m.age / FLASH_AGE) * 2.5;
         const cy = yForE(m.E);
         const isAboveV0 = Number.isFinite(m.E) && v0 > 0 && m.E > v0;
         const fillColour = isAboveV0 ? ionisedCol : col;
-        return <circle key={i} cx={xToPx(m.x)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
+        // Horizontal viewBox→px stretch (extended mode stretches x only; y is 1:1).
+        const sx = (extendedY && svgPxW > 0) ? svgPxW / W : 1;
+        // σ as a vertical pixel radius on the energy axis — a ±σ error bar.
+        const sigPx = (extendedY && sigmaE > 0 && eHistMax > 0)
+          ? sigmaE * (floorY - topPad) / eHistMax : 0;
+        const ryPx = baseR + sigPx;   // vertical radius (px); grows with σ
+        const rxVb = baseR / sx;      // horizontal radius (viewBox units → renders as baseR px)
+        return <ellipse key={i} cx={xToPx(m.x)} cy={cy} rx={rxVb} ry={ryPx}
+          fill={fillColour} opacity={opacity * 0.85} />;
       })}
 
       {isIonised && (

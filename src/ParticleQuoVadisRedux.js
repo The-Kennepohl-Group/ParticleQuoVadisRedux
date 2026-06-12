@@ -1233,6 +1233,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:pauseIncrement', 10000);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:maxBoundCap',    8);
   const [histBins,       setHistBins]       = useSavedState('redux:histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',       'en');
   const [showNotes,      setShowNotes]      = useSavedState('redux:showNotes',      false);
@@ -2112,6 +2113,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
           histBins={histBins}             setHistBins={setHistBins}
+          dotErrorBars={dotErrorBars}     setDotErrorBars={setDotErrorBars}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -2627,7 +2629,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           <Tab1OverlayRow
             overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
             logEnergy={logEnergy} setLogEnergy={setLogEnergy}
-            sigma={sigma}
+            sigma={dotErrorBars ? sigma : 0}
             states={states} probs={probs} t={tRef.current} isIonised={isIonised}
             energy={energy} V0={V0} eHistMax={eHistMax}
             xHistDensity={xHistDisp} eHistDensity={eHistDisp}
@@ -2794,7 +2796,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 v0={V0}
                 eHistMax={eHistMax}
                 eSet={energy}
-                sigmaE={sigma}
+                sigmaE={dotErrorBars ? sigma : 0}
                 showEigenStates={showEigen ? states : null}
               />
               <VerticalEnergyHistogram
@@ -3720,9 +3722,10 @@ function useMeasuredWidth() {
 // the horizontal radius is the fixed pulse size, aspect-corrected so σ = 0
 // reads as a circle. GLOBAL TUNING LIVES HERE — adjust the pulse size or the
 // σ scaling in this one function and every sim view follows.
+const DOT_SIGMA_SCALE = 0.6;   // softening factor on the σ → pixel mapping
 function measurementDotRadii(age, sigmaE, axisPxY, eHistMax, sx) {
   const baseR = 1.5 + (1 - age / FLASH_AGE) * 2.5;   // screen-px pulse radius
-  const sigPx = (sigmaE > 0 && eHistMax > 0) ? sigmaE * (axisPxY / eHistMax) : 0;
+  const sigPx = (sigmaE > 0 && eHistMax > 0) ? sigmaE * (axisPxY / eHistMax) * DOT_SIGMA_SCALE : 0;
   return { rx: baseR / (sx || 1), ry: baseR + sigPx };
 }
 
@@ -4992,6 +4995,7 @@ function SettingsModal({
   pauseIncrement, setPauseIncrement,
   maxBoundCap,    setMaxBoundCap,
   histBins,       setHistBins,
+  dotErrorBars,   setDotErrorBars,
   waveTimeMult,   setWaveTimeMult,
   randomSeed,     setRandomSeed,
   language,       setLanguage,
@@ -5044,6 +5048,7 @@ function SettingsModal({
     setPauseIncrement(10000);
     setMaxBoundCap(8);
     setHistBins(NBINS_X);
+    setDotErrorBars(true);
     setWaveTimeMult(1);
     setRandomSeed(0);
     setLanguage('en');
@@ -5109,6 +5114,21 @@ function SettingsModal({
             full {NBINS_X}-bin resolution and the exported CSV/JSON always
             contain that full resolution, so saved data can be re-binned
             freely afterwards.
+          </div>
+        </div>
+
+        <div style={rowStyle}>
+          <div style={labelStyle}>Measurement dots</div>
+          <SegmentedToggle
+            value={dotErrorBars ? 'scaled' : 'plain'}
+            onChange={(v) => setDotErrorBars(v === 'scaled')}
+            options={[{ value: 'scaled', label: 'Scaled to σ' }, { value: 'plain', label: 'Plain circles' }]}
+            accent={col.accent} inkDim={col.inkDim} rule={col.rule} mono={fonts.mono}
+          />
+          <div style={hintStyle}>
+            <em>Scaled:</em> each dot's height shows the energy resolution σ —
+            the band the reading could have fallen in. <em>Plain:</em> a fixed
+            circle marking only where each measurement actually landed.
           </div>
         </div>
 
@@ -7654,6 +7674,7 @@ function Tab2SystemPanel({
   v0Val,     setV0Val,
   gammaVal,  setGammaVal,
   sigmaVal,  setSigmaVal,
+  dotErrorBars = true,
   energyVal, setEnergyVal, setEnergyByIndex,
   // Per-parameter A↔B link state + toggles. Identical for A and B
   // (they're shared state lifted to the parent); each system panel
@@ -7756,7 +7777,7 @@ function Tab2SystemPanel({
             v0={v0Val}
             eHistMax={eHistMaxEv}
             eSet={energyVal}
-            sigmaE={sigmaVal}
+            sigmaE={dotErrorBars ? sigmaVal : 0}
             showEigenStates={showEigen ? eigenStatesEv : null}
             compactNLabels={true}
           />
@@ -8126,6 +8147,7 @@ function Tab3SystemPanel({
   v0Val,     setV0Val,
   gammaVal,  setGammaVal,
   sigmaVal,  setSigmaVal,
+  dotErrorBars = true,
   energyVal, setEnergyVal, setEnergyByIndex,
   linkedL,      toggleLinkedL,
   linkedMEff,   toggleLinkedMEff,
@@ -8222,7 +8244,7 @@ function Tab3SystemPanel({
             xMinNm={xMinNm} xMaxNm={xMaxNm}
             eHistMax={eHistMaxEv}
             eSet={energyVal}
-            sigmaE={sigmaVal}
+            sigmaE={dotErrorBars ? sigmaVal : 0}
             showEigenStates={showEigen ? eigenStatesEv : null}
             compactNLabels={true}
           />
@@ -8571,6 +8593,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
   // panels — it's a UI knob, not a physical knob).
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab2.maxBoundCap', 8);
   const [histBins,       setHistBins]       = useSavedState('redux:tab2.histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:tab2.dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   // Per-tab preferences shared via the Settings modal. Same shape as
   // tab 1's, namespaced under `redux:tab2.*` so the two tabs can
   // diverge if the student wants.
@@ -9515,6 +9538,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
           histBins={histBins}             setHistBins={setHistBins}
+          dotErrorBars={dotErrorBars}     setDotErrorBars={setDotErrorBars}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -9861,7 +9885,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
             overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
             logEnergy={logEnergy} setLogEnergy={setLogEnergy}
-            sigmaA={sigmaA} sigmaB={sigmaB}
+            sigmaA={dotErrorBars ? sigmaA : 0} sigmaB={dotErrorBars ? sigmaB : 0}
             lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
             energyA={energyA} energyB={energyB}
             statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
@@ -9901,6 +9925,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             energyVal={energyA}
             eHistMaxEv={eHistMaxEvA}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            dotErrorBars={dotErrorBars}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
           <Tab2SystemPanel section="sim"
@@ -9922,6 +9947,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             energyVal={energyB}
             eHistMaxEv={eHistMaxEvB}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            dotErrorBars={dotErrorBars}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
         </div>
@@ -10014,6 +10040,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [v0B,     setV0B]     = useSavedState('redux:tab3.B.v0eV',     5.0);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab3.maxBoundCap', 8);
   const [histBins,       setHistBins]       = useSavedState('redux:tab3.histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:tab3.dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:tab3.pauseIncrement', 10000);
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:tab3.waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',            'en');
@@ -11203,7 +11230,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
           overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
-          sigmaA={sigmaA} sigmaB={sigmaB}
+          sigmaA={dotErrorBars ? sigmaA : 0} sigmaB={dotErrorBars ? sigmaB : 0}
           xTurningNmA={xTurningNmA} xTurningNmB={xTurningNmB}
           wallsEngineXA={wallsEngineXA} wallsEngineXB={wallsEngineXB}
           lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
@@ -11248,6 +11275,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xTurningNm={xTurningNmA} wallsEngineX={wallsEngineXA}
           qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA} showTheory={showTheory}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          dotErrorBars={dotErrorBars}
         />
         <Tab3SystemPanel section="sim"
           label="B"
@@ -11270,6 +11298,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xTurningNm={xTurningNmB} wallsEngineX={wallsEngineXB}
           qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB} showTheory={showTheory}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          dotErrorBars={dotErrorBars}
         />
       </div>
       )}
@@ -11392,6 +11421,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
               <Stepper value={maxBoundCap} onChange={setMaxBoundCap} min={1} max={MAX_BOUND_STATES_DISPLAY} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div title={`Bins used to draw the histograms (10–${NBINS_X}). Plotting only — the simulation and the exported CSV/JSON always keep the full ${NBINS_X}-bin resolution, so saved data can be re-binned afterwards.`}>Histogram bins (display)</div>
               <Stepper value={histBins} onChange={setHistBins} min={10} max={NBINS_X} step={10} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div title="Scaled: each measurement dot's height shows the energy resolution σ (the band the reading could have fallen in). Plain: a fixed circle marking only where each measurement landed.">Measurement dots</div>
+              <SegmentedToggle value={dotErrorBars ? 'scaled' : 'plain'} onChange={(v) => setDotErrorBars(v === 'scaled')} options={[{ value: 'scaled', label: 'Scaled to σ' }, { value: 'plain', label: 'Plain circles' }]} accent={COL.accent} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
               <div>Wavefunction time multiplier</div>
               <Stepper value={waveTimeMult} onChange={setWaveTimeMult} min={0.1} max={10} step={0.1} decimals={1} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Random seed (0 = unseeded)</div>

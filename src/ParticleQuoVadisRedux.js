@@ -1,7 +1,8 @@
 /*
- * Particle, Quo Vadis. Redux — finite potential well simulation
+ * Particle, Quo Vadis. Redux — finite potential well simulation (v0.9.0)
  * Copyright (c) 2026 Pierre Kennepohl, University of Calgary
- * MIT License (see LICENSE)
+ * MIT License (see LICENSE). Docs/pedagogy: CC-BY-SA 4.0 (see LICENSE-docs).
+ * Developed with AI assistance (Claude, Anthropic); see CREDITS.md.
  *
  * This file contains JSX. It uses the .js extension (not .jsx) so static
  * web servers — including GitHub Pages — serve it with the correct
@@ -12,12 +13,16 @@
  * this file uses the global `React` object directly rather than ES module
  * imports.
  *
- * Status: chunk 2 of tab 1.
- *   - chunk 1: numerical eigenvalue solver for the finite well.
- *   - chunk 2: classical particle simulation with escape above V0 (this chunk),
- *              with the page layout matched to the sibling infinite-well app.
- *              The Quantum panel is a placeholder until chunk 3.
- * See NOTES.md for the working plan and PEDAGOGY.md for the design rationale.
+ * Single-file teaching app with three tabs:
+ *   - Tab 1 (Depth): one finite square well, classical vs quantum, with
+ *     the well-depth control V0, finite bound-state count, wavefunction
+ *     leakage past the walls, and the ionisation threshold.
+ *   - Tab 2 (Width): two quantum wells (A vs B) compared in real units
+ *     (nm, m_e, eV) with per-parameter A↔B link toggles.
+ *   - Tab 3 (Shape): A vs B with different confining-potential shapes
+ *     (finite square / truncated parabolic / softened Coulomb).
+ * An "Overlay simulations" toggle superimposes A and B on one set of axes.
+ * See NOTES.md for the working notes and PEDAGOGY.md for the design rationale.
  */
 
 const { useState, useEffect, useRef, useMemo } = React;

@@ -27,7 +27,9 @@ See [PEDAGOGY.md](PEDAGOGY.md) for the design rationale, including the explicit 
 
 ## Try it
 
-The simulation is a single HTML page. Open [`index.html`](index.html) in any modern browser. No installation required.
+**Live:** <https://the-kennepohl-group.github.io/ParticleQuoVadisRedux/>
+
+The simulation is a single HTML page. To run it locally, open [`index.html`](index.html) in any modern browser. No installation required.
 
 ## How to use it
 
@@ -99,6 +101,8 @@ If you use this tool in teaching or research, please cite it. GitHub renders a c
 - **Documentation and pedagogical materials** (this README, PEDAGOGY.md, screenshots, example data files) are licensed under [CC-BY-SA 4.0](LICENSE-docs).
 
 You are free to use, modify, and redistribute under those terms.
+
+Third-party runtime dependencies (React, Babel, the fonts) keep their own licences; see [`CREDITS.md`](CREDITS.md) for the full notice.
 
 ## Contributions and feedback
 

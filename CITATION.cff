@@ -5,10 +5,10 @@ authors:
   - family-names: Kennepohl
     given-names: Pierre
     affiliation: "University of Calgary"
-    # orcid: "https://orcid.org/0000-0000-0000-0000"   # add your ORCID if you'd like
+    orcid: "https://orcid.org/0000-0003-3408-9157"
 type: software
-repository-code: "https://github.com/pkennepohl/ParticleQuoVadisRedux"
-url: "https://pkennepohl.github.io/ParticleQuoVadisRedux/"
+repository-code: "https://github.com/The-Kennepohl-Group/ParticleQuoVadisRedux"
+url: "https://the-kennepohl-group.github.io/ParticleQuoVadisRedux/"
 license: MIT
 keywords:
   - quantum mechanics
@@ -36,6 +36,9 @@ abstract: >
   preset menu and per-parameter linking between the two systems, supporting
   the geometry- and inertia-driven energy-ladder story relevant to
   conjugated pi-systems, cyanine dye chain-length shifts, and quantum-dot
-  fluorescence tuning.
-version: 0.2.0
-date-released: 2026-05-22
+  fluorescence tuning. A third tab compares confining-potential shapes
+  (finite square, truncated parabolic, softened Coulomb) at matched width
+  and depth, and an overlay mode superimposes the two systems on a shared
+  set of axes for direct comparison.
+version: 0.9.0
+date-released: 2026-06-12

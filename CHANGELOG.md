@@ -5,14 +5,18 @@ All notable changes to *Particle, Quo Vadis. Redux* will be recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] – 2026-06-12
+
+Pre-release approaching feature-complete. Adds the third tab (Shape), the cross-system overlay view, adjustable display binning, and energy-resolution measurement dots on top of the 0.2.0 base.
 
 ### Added
 
+- **Tab 3 — Shape.** Two quantum systems whose confining-potential *shape* differs — finite square, truncated parabolic, or softened Coulomb — at the same width and depth, solved on a finite-difference grid. Same A↔B link toggles and Spectroscopy panel as Tab 2; the FWHM convention keeps the width control meaningful across shapes. Data export under schema `finite-well-shape-comparison-export/v1`.
 - **Overlay simulations** display toggle on every tab (default off). When on, the two side-by-side panels collapse into one combined panel that superimposes both systems — both wells, both $|\psi|^2$, both measurement streams, and overlaid position and energy histograms — plus a compact A/B comparison table (bound count, $\langle x\rangle$, $\langle E\rangle$, $P_\text{out}$, $P_\text{ion}$). Tab 1 overlays the classical and quantum distributions in the shared well; Tabs 2–3 compare System A vs B. The combined simulation has its own $|\psi|^2$ / $\psi$ / Off control, and the combined energy histogram keeps the clickable log/linear $P(E)$ axis.
 - **To scale / Normalize widths** sub-control on the overlay (Tabs 2–3 only). *To scale* draws both wells at their true relative sizes on one shared, centred axis — the point of the quantum-dot-size comparison; *Normalize widths* rescales each well to fill the panel equally for shape-only comparison.
 - **Adjustable display histogram bins** in Settings (10–120, default 120). Re-bins the position and energy histograms for plotting only via area-weighted aggregation. The simulation always records — and every CSV/JSON export always stores — the full native resolution (120 position / 100 energy bins), so saved data can be re-binned freely after collection. The setting only ever coarsens (never invents finer detail than was recorded).
 - Export `meta` now records the view state (`show_overlay`, `overlay_normalize`, `overlay_psi_mode`, `hist_bins`), and loaders restore it, so a saved preset reopens in the same overlay / binning view. Files written before this change (without those keys) load unchanged.
+- **Energy-resolution measurement dots.** Each measurement flash is drawn as an ellipse whose vertical extent shows the instrument resolution $\sigma$ — a $\pm\sigma$ energy error bar — so a dot at $\sigma = 0$ is a clean circle and the dots grow taller as $\sigma$ increases (the horizontal radius is aspect-corrected so the circle reads true regardless of panel width, fixing an incidental oval). A per-tab Settings control, *Measurement dots*, switches between this *Scaled to σ* view (default — "what the reading could have been") and *Plain circles* ("only where it landed"). Classical position flashes stay plain circles.
 
 ### Fixed
 

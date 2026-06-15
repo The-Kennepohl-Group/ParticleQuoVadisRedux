@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Particle, Quo Vadis. Redux</title>
   <meta name="description" content="A finite-potential-well sibling to Particle, Quo Vadis? A teaching tool for chemistry students covering ionisation, bound vs continuum states, and wavefunction leakage." />
+  <meta name="author" content="Pierre Kennepohl" />
+  <link rel="license" href="https://github.com/The-Kennepohl-Group/ParticleQuoVadisRedux/blob/main/LICENSE" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Fraunces:ital,wght@0,400;1,400&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -34,6 +36,24 @@
     <div id="loading">Loading simulation…</div>
   </div>
   <div id="error"></div>
+
+  <!-- Attribution footer. Outside #root so the React render never clears it;
+       this is the credit visible to people who only ever use the deployed
+       app and never see the repository. -->
+  <footer style="background:#0e1320;color:#9aa0b4;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.7;text-align:center;padding:26px 16px 36px;border-top:1px solid #232a40;">
+    <div style="max-width:760px;margin:0 auto;">
+      <div style="color:#e9e4d4;">Particle, Quo Vadis. Redux — v0.9.0</div>
+      <div>© 2026 Pierre Kennepohl, University of Calgary</div>
+      <div>
+        Code <a href="https://github.com/The-Kennepohl-Group/ParticleQuoVadisRedux/blob/main/LICENSE" style="color:#7adfd0;">MIT</a>
+        · Docs <a href="https://github.com/The-Kennepohl-Group/ParticleQuoVadisRedux/blob/main/LICENSE-docs" style="color:#7adfd0;">CC-BY-SA 4.0</a>
+        · <a href="https://github.com/The-Kennepohl-Group/ParticleQuoVadisRedux" style="color:#7adfd0;">Source &amp; how to cite</a>
+      </div>
+      <div style="color:#6b7185;margin-top:6px;">
+        Developed with AI assistance (Claude, Anthropic); the physics, design, and pedagogy are the author's.
+      </div>
+    </div>
+  </footer>
 
   <!--
     The simulation source lives in src/ParticleQuoVadisRedux.js for easy reading

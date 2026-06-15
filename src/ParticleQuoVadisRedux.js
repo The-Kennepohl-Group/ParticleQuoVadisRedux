@@ -1233,6 +1233,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:pauseIncrement', 10000);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:maxBoundCap',    8);
   const [histBins,       setHistBins]       = useSavedState('redux:histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',       'en');
   const [showNotes,      setShowNotes]      = useSavedState('redux:showNotes',      false);
@@ -2112,6 +2113,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
           histBins={histBins}             setHistBins={setHistBins}
+          dotErrorBars={dotErrorBars}     setDotErrorBars={setDotErrorBars}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -2627,6 +2629,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
           <Tab1OverlayRow
             overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
             logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            sigma={dotErrorBars ? sigma : 0}
             states={states} probs={probs} t={tRef.current} isIonised={isIonised}
             energy={energy} V0={V0} eHistMax={eHistMax}
             xHistDensity={xHistDisp} eHistDensity={eHistDisp}
@@ -2793,6 +2796,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                 v0={V0}
                 eHistMax={eHistMax}
                 eSet={energy}
+                sigmaE={dotErrorBars ? sigma : 0}
                 showEigenStates={showEigen ? states : null}
               />
               <VerticalEnergyHistogram
@@ -3686,8 +3690,50 @@ function VerticalSlider({ label, value, onChange, min, max, accent, ionisedAccen
 //
 // Layout: width is responsive via viewBox; the horizontal padding (60 px
 // each side) matches PositionHistogram below so the walls line up
+// ---- Measurement-flash dot geometry (shared by every sim view) ----
+// Sim panels render with preserveAspectRatio="none", which stretches the
+// x-axis while the y-axis stays 1:1 in the extended layout. useMeasuredWidth
+// reports the panel's pixel width so a flash dot's horizontal radius can be
+// counter-scaled — a σ = 0 dot then renders as a true circle regardless of
+// panel width, instead of the incidental oval a raw <circle> produced.
+function useMeasuredWidth() {
+  const ref = useRef(null);
+  const [w, setW] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const measure = () => setW(el.clientWidth || el.getBoundingClientRect().width || 0);
+    measure();
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') { ro = new ResizeObserver(measure); ro.observe(el); }
+    else { window.addEventListener('resize', measure); }
+    return () => { if (ro) ro.disconnect(); else window.removeEventListener('resize', measure); };
+  }, []);
+  return [ref, w];
+}
+
+// Radii (in SVG viewBox units) for a measurement flash drawn as an ellipse.
+//   age      — flash age in frames (drives the fade-in "pulse" size).
+//   sigmaE   — energy resolution σ in the same units as eHistMax (0 ⇒ none).
+//   axisPxY  — pixel height of the energy axis (E=0 → E=eHistMax) in the panel.
+//   eHistMax — top of the energy axis (same units as sigmaE).
+//   sx       — horizontal viewBox→pixel scale (panelWidthPx / viewBoxW).
+// The vertical radius grows by ±1σ on the energy axis (an honest error bar);
+// the horizontal radius is the fixed pulse size, aspect-corrected so σ = 0
+// reads as a circle. GLOBAL TUNING LIVES HERE — adjust the pulse size or the
+// σ scaling in this one function and every sim view follows.
+const DOT_SIGMA_SCALE = 0.6;   // softening factor on the σ → pixel mapping
+function measurementDotRadii(age, sigmaE, axisPxY, eHistMax, sx) {
+  const baseR = 1.5 + (1 - age / FLASH_AGE) * 2.5;   // screen-px pulse radius
+  const sigPx = (sigmaE > 0 && eHistMax > 0) ? sigmaE * (axisPxY / eHistMax) * DOT_SIGMA_SCALE : 0;
+  return { rx: baseR / (sx || 1), ry: baseR + sigPx };
+}
+
 // between the two views in the column.
 function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, recentMeasurements, col, wall, bg, ionisedCol, mono, eHistMax }) {
+  // Measured width → aspect-correct the position-flash dots to clean circles
+  // (classical flashes carry no energy coordinate, so no σ spread here).
+  const [svgRef, svgPxW] = useMeasuredWidth();
   const extendedY = Number.isFinite(eHistMax) && eHistMax > 0 && V0 > 0;
   const W = 480;
   const H = extendedY ? 240 : 130;
@@ -3762,7 +3808,7 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
   });
   return (
     <div style={{ position: 'relative', background: bg, borderRadius: 2, lineHeight: 0 }}>
-    <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}
+    <svg ref={svgRef} width="100%" height={H} viewBox={`0 0 ${W} ${H}`}
          preserveAspectRatio="none"
          style={{ display: 'block' }}>
       {/* Full finite-square potential outline traced as one polyline,
@@ -3802,8 +3848,9 @@ function ParticleView({ x, energy, V0, isIonised, bouncePhase, bouncePeakFrac, r
           histogram ticks above. */}
       {recentMeasurements && recentMeasurements.map((m, i) => {
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
-        const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
-        return <circle key={i} cx={xToPx(m.x)} cy={flashY} r={rr} fill={col} opacity={opacity * 0.85} />;
+        const sx = svgPxW > 0 ? svgPxW / W : 1;
+        const { rx, ry } = measurementDotRadii(m.age, 0, 1, 1, sx); // σ=0 ⇒ clean circle
+        return <ellipse key={i} cx={xToPx(m.x)} cy={flashY} rx={rx} ry={ry} fill={col} opacity={opacity * 0.85} />;
       })}
 
       {isIonised && (
@@ -3890,7 +3937,17 @@ function WavefunctionView({
   // compression isn't wide enough to fit the full label without
   // truncating to "n=".
   compactNLabels = false,
+  // PROTOTYPE: per-measurement energy resolution σ, in the same units as
+  // eHistMax / m.E. When > 0 each flash dot spreads vertically by ±σ (an
+  // energy error bar); the horizontal radius is aspect-corrected so σ = 0
+  // reads as a clean circle despite the panel's preserveAspectRatio="none"
+  // x-stretch. Defaults to 0 (clean circles, no spread).
+  sigmaE = 0,
 }) {
+  // Measure the rendered SVG width so flash dots draw as true circles at
+  // σ = 0 despite the horizontal stretch (vertical axis is 1:1 in extended
+  // mode). See measurementDotRadii / useMeasuredWidth.
+  const [svgRef, svgPxW] = useMeasuredWidth();
   // psiMode: 'density' = |ψ|², 'wavefunction' = Re ψ + Im ψ, 'off' = no curve
   const showDensity      = psiMode === 'density';
   const showWavefunction = psiMode === 'wavefunction';
@@ -4072,7 +4129,8 @@ function WavefunctionView({
   }
 
   return (
-    <svg width="100%"
+    <svg ref={svgRef}
+         width="100%"
          height={extendedY ? H : undefined}
          preserveAspectRatio={extendedY ? 'none' : undefined}
          viewBox={`0 0 ${W} ${H}`}
@@ -4195,11 +4253,13 @@ function WavefunctionView({
 
       {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
-        const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
         const cy = yForE(m.E);
         const isAboveV0 = Number.isFinite(m.E) && v0 > 0 && m.E > v0;
         const fillColour = isAboveV0 ? ionisedCol : col;
-        return <circle key={i} cx={xToPx(m.x)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
+        const sx = (extendedY && svgPxW > 0) ? svgPxW / W : 1;
+        const { rx, ry } = measurementDotRadii(m.age, extendedY ? sigmaE : 0, floorY - topPad, eHistMax, sx);
+        return <ellipse key={i} cx={xToPx(m.x)} cy={cy} rx={rx} ry={ry}
+          fill={fillColour} opacity={opacity * 0.85} />;
       })}
 
       {isIonised && (
@@ -4264,7 +4324,10 @@ function Tab3WavefunctionView({
   // just the number ("1", "2", ...) instead of "n=k". See the matching
   // prop on WavefunctionView for the full rationale.
   compactNLabels = false,
+  // Energy resolution σ (eV) — flash dots spread vertically by ±σ. 0 ⇒ none.
+  sigmaE = 0,
 }) {
+  const [svgRef, svgPxW] = useMeasuredWidth();
   const showDensity      = psiMode === 'density';
   const showWavefunction = psiMode === 'wavefunction';
   const extendedY = Number.isFinite(eHistMax) && eHistMax > 0 && v0eV > 0;
@@ -4414,7 +4477,8 @@ function Tab3WavefunctionView({
   const minusHalfLPx = xToPx(-lengthNm / 2);
 
   return (
-    <svg width="100%"
+    <svg ref={svgRef}
+         width="100%"
          height={extendedY ? H : undefined}
          preserveAspectRatio={extendedY ? 'none' : undefined}
          viewBox={`0 0 ${W} ${H}`}
@@ -4550,7 +4614,6 @@ function Tab3WavefunctionView({
       {!isIonised && recentMeasurements && recentMeasurements.map((m, i) => {
         const xNm = (m.x - 0.5) * lengthNm;
         const opacity = Math.max(0, 1 - m.age / FLASH_AGE);
-        const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
         // Extended mode: use the shared yForE mapping (E spans the full
         // panel, ionised events land above V₀ rather than at the rim).
         // Legacy: fraction of v0eV clamped to [0, 1] within the well.
@@ -4563,7 +4626,9 @@ function Tab3WavefunctionView({
         }
         const isAboveV0 = Number.isFinite(m.E) && v0eV > 0 && m.E > v0eV;
         const fillColour = isAboveV0 ? ionisedCol : col;
-        return <circle key={i} cx={xToPx(xNm)} cy={cy} r={rr} fill={fillColour} opacity={opacity * 0.85} />;
+        const sx = (extendedY && svgPxW > 0) ? svgPxW / W : 1;
+        const { rx, ry } = measurementDotRadii(m.age, extendedY ? sigmaE : 0, floorY - topPad, eHistMax, sx);
+        return <ellipse key={i} cx={xToPx(xNm)} cy={cy} rx={rx} ry={ry} fill={fillColour} opacity={opacity * 0.85} />;
       })}
       </g>
 
@@ -4930,6 +4995,7 @@ function SettingsModal({
   pauseIncrement, setPauseIncrement,
   maxBoundCap,    setMaxBoundCap,
   histBins,       setHistBins,
+  dotErrorBars,   setDotErrorBars,
   waveTimeMult,   setWaveTimeMult,
   randomSeed,     setRandomSeed,
   language,       setLanguage,
@@ -4982,6 +5048,7 @@ function SettingsModal({
     setPauseIncrement(10000);
     setMaxBoundCap(8);
     setHistBins(NBINS_X);
+    setDotErrorBars(true);
     setWaveTimeMult(1);
     setRandomSeed(0);
     setLanguage('en');
@@ -5047,6 +5114,21 @@ function SettingsModal({
             full {NBINS_X}-bin resolution and the exported CSV/JSON always
             contain that full resolution, so saved data can be re-binned
             freely afterwards.
+          </div>
+        </div>
+
+        <div style={rowStyle}>
+          <div style={labelStyle}>Measurement dots</div>
+          <SegmentedToggle
+            value={dotErrorBars ? 'scaled' : 'plain'}
+            onChange={(v) => setDotErrorBars(v === 'scaled')}
+            options={[{ value: 'scaled', label: 'Scaled to σ' }, { value: 'plain', label: 'Plain circles' }]}
+            accent={col.accent} inkDim={col.inkDim} rule={col.rule} mono={fonts.mono}
+          />
+          <div style={hintStyle}>
+            <em>Scaled:</em> each dot's height shows the energy resolution σ —
+            the band the reading could have fallen in. <em>Plain:</em> a fixed
+            circle marking only where each measurement actually landed.
           </div>
         </div>
 
@@ -6760,6 +6842,7 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
   const nmShared = !engineMode && !normalize;
   const showDensity = psiMode === undefined || psiMode === 'density';
   const showWave = psiMode === 'wavefunction';
+  const [svgRef, svgPxW] = useMeasuredWidth();
   function yForE(E) {
     if (!Number.isFinite(E)) return floorY;
     const f = Math.max(0, Math.min(1, E / eHistMax));
@@ -6773,7 +6856,7 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
     return (xEng) => PAD_L + ((leftOff + xEng * lengthNm - xMinNm) / xRangeNm) * INNER_W;
   }
   return (
-    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
+    <svg ref={svgRef} width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
       style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
       {/* Clip the curves / dots horizontally to the plot area (tall rect ⇒
           vertical overflow into the position histogram below is still
@@ -6813,9 +6896,10 @@ function OverlaySquareSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, en
               {waves && waves.imPath && <path d={waves.imPath} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />}
               {b.recent && b.recent.map((m, i) => {
                 const op = Math.max(0, 1 - m.age / FLASH_AGE);
-                const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
                 const E = Number.isFinite(m.E) ? m.E : (Number.isFinite(b.eSet) ? b.eSet : 0);
-                return <circle key={i} cx={xToPx(m.x)} cy={yForE(E)} r={rr} fill={b.col} opacity={op * 0.8} />;
+                const sx = svgPxW > 0 ? svgPxW / W : 1;
+                const { rx, ry } = measurementDotRadii(m.age, b.sigmaE || 0, floorY - topPad, eHistMax, sx);
+                return <ellipse key={i} cx={xToPx(m.x)} cy={yForE(E)} rx={rx} ry={ry} fill={b.col} opacity={op * 0.8} />;
               })}
             </g>
             {b.isIonised && (
@@ -6836,6 +6920,7 @@ function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, psi
   const topPad = 4, floorY = H - 4, MARGIN = 0.3;
   const showDensity = psiMode === undefined || psiMode === 'density';
   const showWave = psiMode === 'wavefunction';
+  const [svgRef, svgPxW] = useMeasuredWidth();
   function yForE(E) {
     if (!Number.isFinite(E)) return floorY;
     const f = Math.max(0, Math.min(1, E / eHistMax));
@@ -6850,7 +6935,7 @@ function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, psi
   }
   const onPanel = (px) => px >= PAD_L && px <= PAD_L + INNER_W;
   return (
-    <svg width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
+    <svg ref={svgRef} width="100%" height={H} preserveAspectRatio="none" viewBox={`0 0 ${W} ${H}`} overflow="visible"
       style={{ display: 'block', background: bg, borderRadius: 2, overflow: 'visible', position: 'relative', zIndex: 1 }}>
       {/* Clip the potential / curves / dots horizontally to the plot area
           (the rect is tall so wavefunction lobes still overflow downward
@@ -6880,9 +6965,10 @@ function OverlayShapeSimView({ bundles, eHistMax, xMinNm, xMaxNm, normalize, psi
               {waves && waves.imPath && <path d={waves.imPath} fill="none" stroke={b.col} strokeWidth={1.4} strokeDasharray="3 3" opacity={0.8} />}
               {b.recent && b.recent.map((m, i) => {
                 const op = Math.max(0, 1 - m.age / FLASH_AGE);
-                const rr = 1.5 + (1 - m.age / FLASH_AGE) * 3;
                 const xNm = (m.x - 0.5) * b.lengthNm;
-                return <circle key={i} cx={xToPx(xNm)} cy={yForE(Number.isFinite(m.E) ? m.E : 0)} r={rr} fill={b.col} opacity={op * 0.8} />;
+                const sx = svgPxW > 0 ? svgPxW / W : 1;
+                const { rx, ry } = measurementDotRadii(m.age, b.sigmaE || 0, floorY - topPad, eHistMax, sx);
+                return <ellipse key={i} cx={xToPx(xNm)} cy={yForE(Number.isFinite(m.E) ? m.E : 0)} rx={rx} ry={ry} fill={b.col} opacity={op * 0.8} />;
               })}
             </g>
             {Number.isFinite(b.eSet) && (
@@ -7199,7 +7285,7 @@ function Tab1OverlayRow(p) {
   const eDisp = p.eHistMax;
   const simBundles = [
     { classical: true, label: 'Classical', col: COL.classical, lengthNm: 1, v0: p.V0, eSet: p.energy, recent: p.recentX },
-    { label: 'Quantum', col: COL.quantum, lengthNm: 1, v0: p.V0, eSet: p.energy, states: p.states, probs: p.probs, t: p.t, isIonised: p.isIonised, recent: p.qRecentX },
+    { label: 'Quantum', col: COL.quantum, lengthNm: 1, v0: p.V0, eSet: p.energy, states: p.states, probs: p.probs, t: p.t, isIonised: p.isIonised, recent: p.qRecentX, sigmaE: p.sigma },
   ];
   const energyBundles = [
     { col: COL.classical, hist: p.eHistDensity, eHistMaxOwn: eDisp, v0: p.V0, theory: p.cETheory, eigen: null, recent: p.recentE },
@@ -7239,8 +7325,8 @@ function Tab2OverlayRow(p) {
   const eDisp = Math.max(p.eHistMaxEvA, p.eHistMaxEvB);
   const norm = p.overlayNormalize;
   const simBundles = [
-    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA },
-    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB },
+    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, sigmaE: p.sigmaA },
+    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, sigmaE: p.sigmaB },
   ];
   const energyBundles = [
     { col: COL.sysA, hist: p.qEHistDensityA, eHistMaxOwn: p.eHistMaxEvA, v0: p.v0A, theory: p.qETheoryA, eigen: p.eigenA, recent: p.qRecentEA },
@@ -7281,8 +7367,8 @@ function Tab3OverlayRow(p) {
   const eDisp = Math.max(p.eHistMaxEvA, p.eHistMaxEvB);
   const norm = p.overlayNormalize;
   const simBundles = [
-    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, xGrid_nm: p.xGridA, V_eV: p.vEvA, xTurningNm: p.xTurningNmA },
-    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, xGrid_nm: p.xGridB, V_eV: p.vEvB, xTurningNm: p.xTurningNmB },
+    { label: 'A', col: COL.sysA, lengthNm: p.lengthA, v0: p.v0A, eSet: p.energyA, states: p.statesA, probs: p.probsA, t: p.tA, isIonised: p.isIonisedA, recent: p.qRecentXA, xGrid_nm: p.xGridA, V_eV: p.vEvA, xTurningNm: p.xTurningNmA, sigmaE: p.sigmaA },
+    { label: 'B', col: COL.sysB, lengthNm: p.lengthB, v0: p.v0B, eSet: p.energyB, states: p.statesB, probs: p.probsB, t: p.tB, isIonised: p.isIonisedB, recent: p.qRecentXB, xGrid_nm: p.xGridB, V_eV: p.vEvB, xTurningNm: p.xTurningNmB, sigmaE: p.sigmaB },
   ];
   const energyBundles = [
     { col: COL.sysA, hist: p.qEHistDensityA, eHistMaxOwn: p.eHistMaxEvA, v0: p.v0A, theory: p.qETheoryA, eigen: p.eigenA, recent: p.qRecentEA },
@@ -7588,6 +7674,7 @@ function Tab2SystemPanel({
   v0Val,     setV0Val,
   gammaVal,  setGammaVal,
   sigmaVal,  setSigmaVal,
+  dotErrorBars = true,
   energyVal, setEnergyVal, setEnergyByIndex,
   // Per-parameter A↔B link state + toggles. Identical for A and B
   // (they're shared state lifted to the parent); each system panel
@@ -7690,6 +7777,7 @@ function Tab2SystemPanel({
             v0={v0Val}
             eHistMax={eHistMaxEv}
             eSet={energyVal}
+            sigmaE={dotErrorBars ? sigmaVal : 0}
             showEigenStates={showEigen ? eigenStatesEv : null}
             compactNLabels={true}
           />
@@ -8059,6 +8147,7 @@ function Tab3SystemPanel({
   v0Val,     setV0Val,
   gammaVal,  setGammaVal,
   sigmaVal,  setSigmaVal,
+  dotErrorBars = true,
   energyVal, setEnergyVal, setEnergyByIndex,
   linkedL,      toggleLinkedL,
   linkedMEff,   toggleLinkedMEff,
@@ -8155,6 +8244,7 @@ function Tab3SystemPanel({
             xMinNm={xMinNm} xMaxNm={xMaxNm}
             eHistMax={eHistMaxEv}
             eSet={energyVal}
+            sigmaE={dotErrorBars ? sigmaVal : 0}
             showEigenStates={showEigen ? eigenStatesEv : null}
             compactNLabels={true}
           />
@@ -8503,6 +8593,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
   // panels — it's a UI knob, not a physical knob).
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab2.maxBoundCap', 8);
   const [histBins,       setHistBins]       = useSavedState('redux:tab2.histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:tab2.dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   // Per-tab preferences shared via the Settings modal. Same shape as
   // tab 1's, namespaced under `redux:tab2.*` so the two tabs can
   // diverge if the student wants.
@@ -9447,6 +9538,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
           pauseIncrement={pauseIncrement} setPauseIncrement={setPauseIncrement}
           maxBoundCap={maxBoundCap}       setMaxBoundCap={setMaxBoundCap}
           histBins={histBins}             setHistBins={setHistBins}
+          dotErrorBars={dotErrorBars}     setDotErrorBars={setDotErrorBars}
           waveTimeMult={waveTimeMult}     setWaveTimeMult={setWaveTimeMult}
           randomSeed={randomSeed}         setRandomSeed={setRandomSeed}
           language={language}             setLanguage={setLanguage}
@@ -9793,6 +9885,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
             overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
             logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            sigmaA={dotErrorBars ? sigmaA : 0} sigmaB={dotErrorBars ? sigmaB : 0}
             lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
             energyA={energyA} energyB={energyB}
             statesA={statesA} statesB={statesB} probsA={probsA} probsB={probsB}
@@ -9832,6 +9925,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             energyVal={energyA}
             eHistMaxEv={eHistMaxEvA}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            dotErrorBars={dotErrorBars}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
           <Tab2SystemPanel section="sim"
@@ -9853,6 +9947,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             energyVal={energyB}
             eHistMaxEv={eHistMaxEvB}
             showEigen={showEigen} showTheory={showTheory} logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+            dotErrorBars={dotErrorBars}
             xMinNm={xMinNm} xMaxNm={xMaxNm}
           />
         </div>
@@ -9945,6 +10040,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
   const [v0B,     setV0B]     = useSavedState('redux:tab3.B.v0eV',     5.0);
   const [maxBoundCap,    setMaxBoundCap]    = useSavedState('redux:tab3.maxBoundCap', 8);
   const [histBins,       setHistBins]       = useSavedState('redux:tab3.histBins', NBINS_X); // display histogram resolution (≤ native)
+  const [dotErrorBars,   setDotErrorBars]   = useSavedState('redux:tab3.dotErrorBars', true); // measurement dots: scale by σ vs plain circle
   const [pauseIncrement, setPauseIncrement] = useSavedState('redux:tab3.pauseIncrement', 10000);
   const [waveTimeMult,   setWaveTimeMult]   = useSavedState('redux:tab3.waveTimeMult',   1);
   const [language,       setLanguage]       = useSavedState('redux:language',            'en');
@@ -11134,6 +11230,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           overlayNormalize={overlayNormalize} setOverlayNormalize={setOverlayNormalize}
           overlayPsiMode={overlayPsiMode} setOverlayPsiMode={setOverlayPsiMode}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          sigmaA={dotErrorBars ? sigmaA : 0} sigmaB={dotErrorBars ? sigmaB : 0}
           xTurningNmA={xTurningNmA} xTurningNmB={xTurningNmB}
           wallsEngineXA={wallsEngineXA} wallsEngineXB={wallsEngineXB}
           lengthA={lengthA} lengthB={lengthB} v0A={v0A} v0B={v0B}
@@ -11178,6 +11275,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xTurningNm={xTurningNmA} wallsEngineX={wallsEngineXA}
           qPosTheory={qPosTheoryA} qEnergyTheory={qEnergyTheoryA} showTheory={showTheory}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          dotErrorBars={dotErrorBars}
         />
         <Tab3SystemPanel section="sim"
           label="B"
@@ -11200,6 +11298,7 @@ function Tab3Content({ activeTab, onChangeTab }) {
           xTurningNm={xTurningNmB} wallsEngineX={wallsEngineXB}
           qPosTheory={qPosTheoryB} qEnergyTheory={qEnergyTheoryB} showTheory={showTheory}
           logEnergy={logEnergy} setLogEnergy={setLogEnergy}
+          dotErrorBars={dotErrorBars}
         />
       </div>
       )}
@@ -11322,6 +11421,8 @@ function Tab3Content({ activeTab, onChangeTab }) {
               <Stepper value={maxBoundCap} onChange={setMaxBoundCap} min={1} max={MAX_BOUND_STATES_DISPLAY} step={1} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div title={`Bins used to draw the histograms (10–${NBINS_X}). Plotting only — the simulation and the exported CSV/JSON always keep the full ${NBINS_X}-bin resolution, so saved data can be re-binned afterwards.`}>Histogram bins (display)</div>
               <Stepper value={histBins} onChange={setHistBins} min={10} max={NBINS_X} step={10} decimals={0} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
+              <div title="Scaled: each measurement dot's height shows the energy resolution σ (the band the reading could have fallen in). Plain: a fixed circle marking only where each measurement landed.">Measurement dots</div>
+              <SegmentedToggle value={dotErrorBars ? 'scaled' : 'plain'} onChange={(v) => setDotErrorBars(v === 'scaled')} options={[{ value: 'scaled', label: 'Scaled to σ' }, { value: 'plain', label: 'Plain circles' }]} accent={COL.accent} inkDim={COL.inkDim} rule={COL.rule} mono={FONTS.mono} />
               <div>Wavefunction time multiplier</div>
               <Stepper value={waveTimeMult} onChange={setWaveTimeMult} min={0.1} max={10} step={0.1} decimals={1} color={COL.accent} rule={COL.rule} mono={FONTS.mono} valueWidth={70} />
               <div>Random seed (0 = unseeded)</div>

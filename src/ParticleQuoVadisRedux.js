@@ -2335,9 +2335,14 @@ function Tab1Content({ activeTab, onChangeTab }) {
         {/* Parameters block (left) + energy slider (right), side-by-side
             at equal heights so the V₀ / Γ / σ rows spread to match the
             slider's vertical extent. Mirrors each Tab 2 system panel.
-            Hidden when the parameter section is collapsed (focus mode). */}
-        {!paramsCollapsed && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, marginBottom: 14, alignItems: 'stretch' }}>
+            Wrapped in a CollapsibleSection so the whole block folds away
+            behind a "PARAMETERS" header bar (focus mode), matching the
+            "What you're looking at" notes header. */}
+        <CollapsibleSection title="Parameters" expanded={!paramsCollapsed}
+          onToggle={() => setParamsCollapsed((c) => !c)}
+          mono={FONTS.mono} inkDim={COL.inkDim}
+          style={{ marginTop: 0, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 14, alignItems: 'stretch' }}>
           <div style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', flexDirection: 'column' }}>
             {/* Editable controls grouped at the top, tightly stacked.
                 V₀ used to live here as a horizontal slider; it's now
@@ -2518,14 +2523,13 @@ function Tab1Content({ activeTab, onChangeTab }) {
             />
           </div>
         </div>
-        )}
+        </CollapsibleSection>
 
         {/* Transport + measurement count — full width. Placed BELOW the
             parameter block so the controls sit immediately above the
             simulation panels: when the user scrolls down to watch the
             run, Play/Pause/Stop stay within reach. */}
         <div ref={transportRef} style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
-              <ParamsToggle collapsed={paramsCollapsed} onToggle={() => setParamsCollapsed((c) => !c)} />
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={isIonised} colour={isIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
                 <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />
@@ -5472,9 +5476,9 @@ function Notes({ energy, V0, states, probs, gammaDisplayed, sigma, isIonised, qI
 // always present, and the student collapses it via a chevron on the
 // header instead of from Settings. Collapsed state persists per-tab
 // per-section via localStorage.
-function CollapsibleSection({ title, expanded, onToggle, children, mono, inkDim }) {
+function CollapsibleSection({ title, expanded, onToggle, children, mono, inkDim, style }) {
   return (
-    <section style={{ marginTop: 22, ...panelStyle() }}>
+    <section style={{ marginTop: 22, ...panelStyle(), ...style }}>
       <button
         onClick={onToggle}
         title={expanded ? 'Click to collapse' : 'Click to expand'}
@@ -5503,36 +5507,6 @@ function CollapsibleSection({ title, expanded, onToggle, children, mono, inkDim 
         </div>
       )}
     </section>
-  );
-}
-
-// Collapse/expand control for the top parameter section, shared by all
-// three tabs. Reuses CollapsibleSection's chevron idiom but renders as a
-// 46-px-high button so it sits flush with the transport buttons it lives
-// beside. Collapsing the parameter section frees vertical space so the
-// simulation panels dominate during a run ("focus mode").
-function ParamsToggle({ collapsed, onToggle }) {
-  return (
-    <button
-      onClick={onToggle}
-      title={collapsed ? 'Show parameters' : 'Hide parameters'}
-      style={{
-        display: 'flex', alignItems: 'center', gap: 7, height: 46,
-        background: 'transparent', border: `1px solid ${COL.rule}`,
-        borderRadius: 4, padding: '0 12px', cursor: 'pointer',
-      }}
-    >
-      <span style={{
-        fontFamily: FONTS.mono, fontSize: 12, color: COL.inkDim,
-        width: 12, display: 'inline-block', textAlign: 'center',
-        transition: 'transform 0.15s',
-        transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
-      }}>▾</span>
-      <span style={{
-        fontFamily: FONTS.mono, fontSize: 11, color: COL.inkDim,
-        letterSpacing: 1, textTransform: 'uppercase',
-      }}>Parameters</span>
-    </button>
   );
 }
 
@@ -9764,8 +9738,11 @@ function Tab2Content({ activeTab, onChangeTab }) {
              here so users see the controls first. The transport bar
              follows BELOW the params, immediately above the sim row
              so Play/Pause/Stop stay reachable when scrolled down. ===== */}
-        {!paramsCollapsed && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch', marginBottom: 14 }}>
+        <CollapsibleSection title="Parameters" expanded={!paramsCollapsed}
+          onToggle={() => setParamsCollapsed((c) => !c)}
+          mono={FONTS.mono} inkDim={COL.inkDim}
+          style={{ marginTop: 0, marginBottom: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch' }}>
           <Tab2SystemPanel section="params"
             label="A"
             lengthVal={lengthA} setLengthVal={setLengthAWithLink}
@@ -9805,7 +9782,7 @@ function Tab2Content({ activeTab, onChangeTab }) {
             showEigen={showEigen}
           />
         </div>
-        )}
+        </CollapsibleSection>
 
         {/* ===== Transport bar — full width, shared across A & B. Plays
              both sims at once; Stop resets both. Show-theory / Show-
@@ -9813,7 +9790,6 @@ function Tab2Content({ activeTab, onChangeTab }) {
              is one tight bar instead of a sparse "Display" panel above
              the visualisations. ===== */}
         <div ref={transportRef} style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
-          <ParamsToggle collapsed={paramsCollapsed} onToggle={() => setParamsCollapsed((c) => !c)} />
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={allIonised} colour={allIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
             <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />
@@ -11135,8 +11111,11 @@ function Tab3Content({ activeTab, onChangeTab }) {
            so the user sets up both systems first. The transport bar
            follows BELOW the params, so Play/Pause/Stop stay reachable
            when the user scrolls down to watch the sims. ===== */}
-      {!paramsCollapsed && (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch', marginBottom: 14 }}>
+      <CollapsibleSection title="Parameters" expanded={!paramsCollapsed}
+        onToggle={() => setParamsCollapsed((c) => !c)}
+        mono={FONTS.mono} inkDim={COL.inkDim}
+        style={{ marginTop: 0, marginBottom: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch' }}>
         <Tab3SystemPanel section="params"
           label="A"
           shape={shapeA} setShapeWithLink={setShapeAWithLink}
@@ -11184,13 +11163,12 @@ function Tab3Content({ activeTab, onChangeTab }) {
           probs={probsB}
         />
       </div>
-      )}
+      </CollapsibleSection>
 
       {/* Transport bar — identical layout to Tabs 1/2. Save and Load
           are disabled-styled (colour={COL.inkDim}) and no-op until
           steps 5/6 wire them; the rest is live. */}
       <div ref={transportRef} style={{ ...panelStyle(), padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 18, marginBottom: 14 }}>
-        <ParamsToggle collapsed={paramsCollapsed} onToggle={() => setParamsCollapsed((c) => !c)} />
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <TransportButton kind="playpause" active={running} onClick={running ? handlePause : handlePlay} disabled={allIonised} colour={allIonised ? COL.inkDim : COL.quantum} bg={COL.panel} />
           <TransportButton kind="stop"      active={false}   onClick={handleStop} colour={COL.danger} bg={COL.panel} />

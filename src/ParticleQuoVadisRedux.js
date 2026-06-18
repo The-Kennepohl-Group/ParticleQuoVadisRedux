@@ -1219,6 +1219,15 @@ function panelStyle() {
   };
 }
 
+// Number.toFixed that never emits a signed zero. A ⟨x⟩ that is a hair
+// negative but rounds to zero would otherwise read "-0.00", where the
+// minus sign just looks like a glitch. Collapse "-0", "-0.0", "-0.00", …
+// back to the unsigned form; every other value formats unchanged.
+function fixed(v, d) {
+  const s = v.toFixed(d);
+  return /^-0(\.0+)?$/.test(s) ? s.slice(1) : s;
+}
+
 // =============================================================
 // TAB 1 — finite well at fixed L, V0 variable, classical + quantum
 // =============================================================
@@ -2748,7 +2757,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                   <div style={{ textAlign: 'left',  visibility: 'hidden' }}>0</div>
                   <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured position. For a uniform classical particle ⟨x⟩ → 0 in centred coordinates (well centre).">⟨x⟩:</div>
                   <div style={{ textAlign: 'left',  color: COL.classical, fontVariantNumeric: 'tabular-nums' }}>
-                    {xMean !== null ? `${(xMean - 0.5).toFixed(2)}L` : '—'}
+                    {xMean !== null ? `${fixed(xMean - 0.5, 2)}L` : '—'}
                   </div>
                   <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured energy. For a classical particle at fixed E_set this just sits at E_set.">⟨E⟩:</div>
                   <div style={{ textAlign: 'left',  color: COL.classical, fontVariantNumeric: 'tabular-nums' }}>
@@ -2870,7 +2879,7 @@ function Tab1Content({ activeTab, onChangeTab }) {
                   <div style={{ textAlign: 'left',  color: COL.ink, fontVariantNumeric: 'tabular-nums' }}>{states.length}</div>
                   <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured position. Symmetric superpositions give ⟨x⟩ ≈ 0 (well centre); asymmetric prep can shift it.">⟨x⟩:</div>
                   <div style={{ textAlign: 'left',  color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
-                    {qxMean !== null ? `${(qxMean - 0.5).toFixed(2)}L` : '—'}
+                    {qxMean !== null ? `${fixed(qxMean - 0.5, 2)}L` : '—'}
                   </div>
                   <div style={{ textAlign: 'right', cursor: 'help' }} title="Sample mean of measured energy. Should converge to Σ |c_n|² E_n + (continuum tail), which is close to but not exactly E_set when Γ > 0 because the Lorentzian weights neighbouring states asymmetrically.">⟨E⟩:</div>
                   <div style={{ textAlign: 'left',  color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
@@ -4940,9 +4949,9 @@ function PositionHistogram({
           fontFamily={mono} fontSize={18} fontWeight={500} fontVariantNumeric="tabular-nums">
           <tspan fill={inkDim}>⟨x⟩ = </tspan>
           {nmMode ? (
-            <tspan fill={isIonised ? ionisedCol : col}>{((centredX ? (meanX - 0.5) : meanX) * lengthNm).toFixed(2)}<tspan fill={inkDim} fontSize={12}> nm</tspan></tspan>
+            <tspan fill={isIonised ? ionisedCol : col}>{fixed((centredX ? (meanX - 0.5) : meanX) * lengthNm, 2)}<tspan fill={inkDim} fontSize={12}> nm</tspan></tspan>
           ) : (
-            <tspan fill={isIonised ? ionisedCol : col}>{(centredX ? (meanX - 0.5) : meanX).toFixed(2)}<tspan fill={inkDim}>L</tspan></tspan>
+            <tspan fill={isIonised ? ionisedCol : col}>{fixed(centredX ? (meanX - 0.5) : meanX, 2)}<tspan fill={inkDim}>L</tspan></tspan>
           )}
         </text>
       )}
@@ -7341,7 +7350,7 @@ function Tab1OverlayRow(p) {
     { col: COL.classical, hist: p.xHistDensity, lengthNm: 1, theory: p.cPosTheory, recent: p.recentX },
     { col: COL.quantum, hist: p.qXHistDensity, lengthNm: 1, theory: p.qPosTheory, recent: p.qRecentX },
   ];
-  const fmtL = (m) => (m !== null && m !== undefined) ? `${(m - 0.5).toFixed(2)} L` : '—';
+  const fmtL = (m) => (m !== null && m !== undefined) ? `${fixed(m - 0.5, 2)} L` : '—';
   const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(1) : '—';
   const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
   const a = { label: 'Classical', col: COL.classical, nBound: '—', meanX: fmtL(p.xMean), meanE: fmtE(p.eMean), pOut: '0%', pIon: '0%', ionised: false };
@@ -7382,7 +7391,7 @@ function Tab2OverlayRow(p) {
     { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA },
     { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB },
   ];
-  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${((m - 0.5) * len).toFixed(2)} nm` : '—';
+  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${fixed((m - 0.5) * len, 2)} nm` : '—';
   const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(2) : '—';
   const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
   const a = { label: 'A', col: COL.sysA, nBound: String(p.statesA.length), meanX: fmtNm(p.qxMeanA, p.lengthA), meanE: fmtE(p.qeMeanA), pOut: fmtPctV(p.qLeakFracA), pIon: fmtPctV(p.qIonisedFracA), ionised: p.qIonisedFracA > 0.01 };
@@ -7424,7 +7433,7 @@ function Tab3OverlayRow(p) {
     { col: COL.sysA, hist: p.qXHistDensityA, lengthNm: p.lengthA, theory: p.qPosTheoryA, recent: p.qRecentXA, wallsEngineX: p.wallsEngineXA },
     { col: COL.sysB, hist: p.qXHistDensityB, lengthNm: p.lengthB, theory: p.qPosTheoryB, recent: p.qRecentXB, wallsEngineX: p.wallsEngineXB },
   ];
-  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${((m - 0.5) * len).toFixed(2)} nm` : '—';
+  const fmtNm = (m, len) => (m !== null && m !== undefined) ? `${fixed((m - 0.5) * len, 2)} nm` : '—';
   const fmtE = (m) => (m !== null && m !== undefined) ? m.toFixed(2) : '—';
   const fmtPctV = (v) => `${(v * 100).toFixed(v >= 0.01 ? 0 : 1)}%`;
   const a = { label: 'A', col: COL.sysA, nBound: String(p.statesA.length), meanX: fmtNm(p.qxMeanA, p.lengthA), meanE: fmtE(p.qeMeanA), pOut: fmtPctV(p.qLeakFracA), pIon: fmtPctV(p.qIonisedFracA), ionised: p.qIonisedFracA > 0.01 };
@@ -7887,7 +7896,7 @@ function Tab2SystemPanel({
               <div style={{ textAlign: 'right', cursor: 'help' }}
                 title="Sample mean of measured position in nm, centred at the well midpoint. Symmetric superpositions give ⟨x⟩ ≈ 0 nm; asymmetric prep shifts it.">⟨x⟩:</div>
               <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
-                {qxMean !== null ? `${((qxMean - 0.5) * lengthVal).toFixed(2)} nm` : '—'}
+                {qxMean !== null ? `${fixed((qxMean - 0.5) * lengthVal, 2)} nm` : '—'}
               </div>
               <div style={{ textAlign: 'right', cursor: 'help' }}
                 title="Sample mean of measured energy (eV). Converges to Σ |c_n|² E_n plus the continuum tail; close to but not exactly E_set when Γ > 0.">⟨E⟩:</div>
@@ -8354,7 +8363,7 @@ function Tab3SystemPanel({
               <div style={{ textAlign: 'right', cursor: 'help' }}
                 title="Sample mean of measured position in nm. Tab 3 centres the well at x = 0, so symmetric wavefunctions give ⟨x⟩ ≈ 0 nm.">⟨x⟩:</div>
               <div style={{ textAlign: 'left', color: COL.quantum, fontVariantNumeric: 'tabular-nums' }}>
-                {qxMean !== null ? `${((qxMean - 0.5) * lengthVal).toFixed(2)} nm` : '—'}
+                {qxMean !== null ? `${fixed((qxMean - 0.5) * lengthVal, 2)} nm` : '—'}
               </div>
               <div style={{ textAlign: 'right', cursor: 'help' }}
                 title="Sample mean of measured energy in eV. Σ |c_n|² E_n plus the continuum tail.">⟨E⟩:</div>

@@ -4741,7 +4741,14 @@ function PositionHistogram({
   const wellLeftOffsetNm = nmMode ? (wellCenterNm - lengthNm / 2) : 0;
 
   const histMax = hist.reduce((a, v) => (v > a ? v : a), 0);
-  const yMax = Math.max(histMax, 0.5) * 1.25;
+  // With no measured data yet, fall back to the theory overlay's peak so
+  // "show theory" autoscales to the curve instead of overflowing the
+  // near-zero floor. Once data exists, scale to data only (toggling theory
+  // must not shift the axis).
+  const theoryMax = (histMax === 0 && overlay)
+    ? overlay.reduce((a, p) => (p.d > a ? p.d : a), 0)
+    : 0;
+  const yMax = Math.max(histMax, theoryMax, 0.5) * 1.25;
 
   // Engine x → pixel. In nm mode, route through nm space so a wider
   // well takes more horizontal screen real estate; in engine mode
@@ -6173,17 +6180,26 @@ function EnergyHistogram({ hist, recentMarkers, col, ink, inkDim, rule, mono, eS
   const innerH = H - PAD.t - PAD.b;
   const axisY = PAD.t + innerH;
 
-  // yMax is set from the histogram data only — toggling the theory
-  // overlay does not shift the y axis. (Floor of 0.005 matches PQV
-  // so that very-broadened σ peaks still scale to fill the panel.)
+  // yMax is set from the histogram data when there is any — toggling the
+  // theory overlay does not shift the y axis. (Floor of 0.005 matches PQV
+  // so that very-broadened σ peaks still scale to fill the panel.) With
+  // no data yet, fall back to the theory curve's peak so "show theory"
+  // autoscales to fill the panel instead of overflowing the floor.
   const dataMax = hist.reduce((a, v) => (v > a ? v : a), 0);
   const NB = hist.length;
-  const linYMax = Math.max(dataMax, 0.005) * 1.25;
+  const theoryMax = (dataMax === 0 && theoryCurve)
+    ? Math.max(
+        (theoryCurve.bound || []).reduce((a, p) => (p.d > a ? p.d : a), 0),
+        (theoryCurve.continuum || []).reduce((a, p) => (p.d > a ? p.d : a), 0)
+      )
+    : 0;
+  const autoMax = Math.max(dataMax, theoryMax);
+  const linYMax = Math.max(autoMax, 0.005) * 1.25;
 
   // Log y-axis spans three decades down from yMax (yMin = yMax / 1000).
   // The histogram bar floor is the axis baseline; bars whose density
   // falls below yMin appear at zero height.
-  const logYMax = Math.max(dataMax, 0.005);
+  const logYMax = Math.max(autoMax, 0.005);
   const logYMin = logYMax / 1000;
 
   function xScale(E) { return PAD.l + (E / eHistMax) * innerW; }
@@ -6458,10 +6474,20 @@ function VerticalEnergyHistogram({
   const innerH = H - PAD.t - PAD.b;
 
   const dataMax = hist.reduce((a, v) => (v > a ? v : a), 0);
-  const linXMax = Math.max(dataMax, 0.005) * 1.25;
+  // With no measured data yet, fall back to the theory curve's peak so the
+  // "show theory" overlay autoscales instead of overflowing the near-zero
+  // floor; with data present, scale to data only (no axis jump on toggle).
+  const theoryMax = (dataMax === 0 && theoryCurve)
+    ? Math.max(
+        (theoryCurve.bound || []).reduce((a, p) => (p.d > a ? p.d : a), 0),
+        (theoryCurve.continuum || []).reduce((a, p) => (p.d > a ? p.d : a), 0)
+      )
+    : 0;
+  const autoMax = Math.max(dataMax, theoryMax);
+  const linXMax = Math.max(autoMax, 0.005) * 1.25;
   // Log axis spans three decades down from the max (xMin = xMax / 1000),
   // matching the horizontal EnergyHistogram's log behaviour.
-  const logXMax = Math.max(dataMax, 0.005);
+  const logXMax = Math.max(autoMax, 0.005);
   const logXMin = logXMax / 1000;
   const NB = hist.length;
 

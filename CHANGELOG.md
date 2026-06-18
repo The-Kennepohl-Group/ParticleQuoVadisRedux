@@ -5,7 +5,7 @@ All notable changes to *Particle, Quo Vadis. Redux* will be recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.0] – 2026-06-12
+## [0.9.0] – 2026-06-18
 
 Pre-release approaching feature-complete. Adds the third tab (Shape), the cross-system overlay view, adjustable display binning, and energy-resolution measurement dots on top of the 0.2.0 base.
 
@@ -17,10 +17,14 @@ Pre-release approaching feature-complete. Adds the third tab (Shape), the cross-
 - **Adjustable display histogram bins** in Settings (10–120, default 120). Re-bins the position and energy histograms for plotting only via area-weighted aggregation. The simulation always records — and every CSV/JSON export always stores — the full native resolution (120 position / 100 energy bins), so saved data can be re-binned freely after collection. The setting only ever coarsens (never invents finer detail than was recorded).
 - Export `meta` now records the view state (`show_overlay`, `overlay_normalize`, `overlay_psi_mode`, `hist_bins`), and loaders restore it, so a saved preset reopens in the same overlay / binning view. Files written before this change (without those keys) load unchanged.
 - **Energy-resolution measurement dots.** Each measurement flash is drawn as an ellipse whose vertical extent shows the instrument resolution $\sigma$ — a $\pm\sigma$ energy error bar — so a dot at $\sigma = 0$ is a clean circle and the dots grow taller as $\sigma$ increases (the horizontal radius is aspect-corrected so the circle reads true regardless of panel width, fixing an incidental oval). A per-tab Settings control, *Measurement dots*, switches between this *Scaled to σ* view (default — "what the reading could have been") and *Plain circles* ("only where it landed"). Classical position flashes stay plain circles.
+- **Collapsible parameter section ("focus mode").** Each tab's top parameter block now folds away behind a "PARAMETERS" chevron header — the same idiom as the Notes and Spectroscopy sections — to free vertical space for the simulation panels. Pressing **Play** also smooth-scrolls the transport bar to the top of the viewport so the panels take centre stage during a run. Default expanded; collapse state is independent per tab.
 
 ### Fixed
 
 - The shape tab's simulation now clips its potential outline and wavefunction to the x-axis while still allowing wavefunction lobes to overflow downward into the position histogram, so the parabolic / softened-Coulomb skirts no longer paint past the left/right plot edges (both the single-panel and overlay views).
+- Blank histograms now autoscale to the *Show theory* overlay. Previously, with no measured data yet, the position and energy axes floored at a near-zero value and the theory curve overflowed the top of the panel; the axis now falls back to the theory curve's peak until data accumulates. With data present the axis still scales to data only, so toggling theory never shifts it.
+- $\langle x\rangle$ readouts no longer show a spurious "-0.00": a position expectation value that rounds to zero from the negative side is now displayed as "0.00".
+- Pinned the in-browser Babel compiler to 7.x. The unpinned CDN had rolled to Babel 8, whose React preset defaults to the automatic JSX runtime (`import … from "react/jsx-runtime"`) — fatal for this UMD-global, no-build page, which fell back to a "simulation did not load" error until pinned.
 
 ## [0.2.0] – 2026-05-22
 

@@ -43,7 +43,7 @@ Each tab has a transport bar at the top (Play / Pause / Stop, Save, Load, Settin
 - **Histogram bins** (Settings) re-bins the position and energy plots for display only — the simulation and every saved CSV/JSON always keep the full native resolution, so exported data can be re-binned freely afterwards.
 - **Click any numeric value** to type a value directly; typed values clamp to each control's valid range.
 - In **Tab 2**, the chain icon next to each parameter toggles whether that parameter is linked between System A and System B. The link defaults are all on (same well in both panels on first run); unlock individual parameters to compare them. Energy linking is smart: clicking the *n* = *k* tick on one side's slider while linked pairs both sides on their own *n* = *k* eigenstate (different absolute eV, same quantum number); dragging the slider pairs by eV.
-- The **Notes** section under the simulation ("What you're looking at") and **Spectroscopy** section (Tab 2 only) are collapsible — click the chevron header to expand.
+- The **Parameters** block (top of each tab), the **Notes** section under the simulation ("What you're looking at"), and the **Spectroscopy** section (Tab 2 only) are collapsible — click the chevron header to expand or collapse. Collapsing the parameters (together with pressing Play, which scrolls the transport bar to the top of the viewport) clears room so the simulation panels take centre stage during a run.
 
 ## How it's built
 
